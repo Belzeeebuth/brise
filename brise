@@ -1,4 +1,0 @@
-#!/usr/bin/env bash
-set -euo pipefail
-BRISE_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-exec node "$BRISE_ROOT/src/launch.mjs" "$@"
