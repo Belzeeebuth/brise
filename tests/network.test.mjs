@@ -4,6 +4,7 @@ import http from 'node:http';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { Readable } from 'node:stream';
 import { Brise } from '../src/core.mjs';
 import { createHandler } from '../src/server.mjs';
 
@@ -31,4 +32,32 @@ test('real HTTP server: pair, approve, upload and download a binary file', async
   const received = await fetch(`${base}/api/files/${file.id}`, { headers:{ Cookie:phoneCookie } });
   assert.equal(received.status, 200);
   assert.deepEqual(Buffer.from(await received.arrayBuffer()), payload);
+});
+
+test('a stalled download is dropped after the idle delay and never blocks uploads', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'brise-network-'));
+  const app = await new Brise({ dataDir:join(directory, 'data'), receiveDir:join(directory, 'received') }).init();
+  const network = { port:0, address:'127.0.0.1', interfaces:[] };
+  const server = http.createServer(createHandler(app, network, { idleTimeout:300 }));
+  t.after(async () => { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await app.close(); await rm(directory, { recursive:true, force:true }); });
+  try { await new Promise((resolve, reject) => { server.once('error', reject); server.listen(0, '127.0.0.1', resolve); }); }
+  catch (error) { if (['EPERM','EACCES'].includes(error.code)) return t.skip('This environment prohibits local network sockets.'); throw error; }
+  network.port = server.address().port;
+  const admin = { role:'admin', id:'admin', name:'Ce PC' };
+  const size = 64 * 1024 * 1024;
+  async function* zeros() { for (let sent = 0; sent < size; sent += 1024 * 1024) yield Buffer.alloc(1024 * 1024); }
+  const shared = await app.upload({ actor:admin, name:'big.bin', size, stream:Readable.from(zeros()) });
+  const stalled = [];
+  for (let i = 0; i < 3; i++) {
+    stalled.push(await new Promise((resolve, reject) => {
+      const req = http.get({ host:'127.0.0.1', port:network.port, path:`/api/files/${shared.id}`, headers:{ Cookie:`brise=${app.adminSession}` } }, res => { res.pause(); resolve(req); });
+      req.on('error', reject);
+    }));
+  }
+  assert.equal(app.active.size, 3);
+  const small = await app.upload({ actor:admin, name:'small.txt', size:2, stream:Readable.from([Buffer.from('ok')]) });
+  assert.ok(small.id);
+  for (let i = 0; i < 40 && app.active.size; i++) await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(app.active.size, 0);
+  for (const req of stalled) req.destroy();
 });

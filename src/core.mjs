@@ -54,6 +54,7 @@ export class Brise extends EventEmitter {
     this.pairToken = token(); this.expiresAt = this.now() + TOKEN_TTL;
     this.emit('change');
   }
+  get uploads() { return [...this.active.values()].filter(t => t.direction !== 'download').length; }
   ensurePairToken() { if (this.now() >= this.expiresAt) this.rotate(); }
   pair(code, name) {
     if (!equal(code, this.pairToken) || this.now() >= this.expiresAt) throw new AppError(403, 'Ce QR code a expiré. Scannez le nouveau code sur le PC.');
@@ -113,7 +114,7 @@ export class Brise extends EventEmitter {
     this.allowed(actor);
     if (!Number.isSafeInteger(size) || size < 0) throw new AppError(400, 'Taille du fichier invalide.');
     if (size > this.maxFileSize) throw new AppError(413, 'Ce fichier dépasse la limite de 10 Go.');
-    if (this.active.size >= 3) throw new AppError(429, 'Trois transferts sont déjà en cours. Réessayez dans un instant.');
+    if (this.uploads >= 3) throw new AppError(429, 'Trois envois sont déjà en cours. Réessayez dans un instant.');
     const id = randomUUID(); const outgoing = actor.role === 'admin';
     const dir = outgoing ? this.cacheDir : this.partialDir;
     const temp = join(dir, `${id}.part`);

@@ -21,7 +21,7 @@ export class ChunkUploads {
   async begin(actor, { name, size }) {
     this.app.allowed(actor);
     if (!Number.isSafeInteger(size) || size < 0 || size > this.app.maxFileSize) throw new AppError(400, 'Taille de fichier invalide (10 Go maximum).');
-    if (this.app.active.size >= 3) throw new AppError(429, 'Trois transferts sont déjà en cours.');
+    if (this.app.uploads >= 3) throw new AppError(429, 'Trois envois sont déjà en cours.');
     const id = randomUUID(), controller = new AbortController();
     const record = { id, ownerId: actor.id, actor, name: safeName(name), size, bytes: 0, direction: actor.role === 'admin' ? 'outgoing' : 'incoming', sender: actor.name, startedAt: Date.now(), updatedAt: Date.now(), busy: false, controller, path: join(this.dir, `${id}.part`) };
     // Reserve capacity before the first await.

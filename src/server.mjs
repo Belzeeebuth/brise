@@ -41,7 +41,7 @@ function credential(req) {
   return String(req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith('brise='))?.slice(6);
 }
 
-export function createHandler(app, network, { openFolder = () => {}, shutdown = () => {}, connections, chunks, publicGateway = false, gatewayPort } = {}) {
+export function createHandler(app, network, { openFolder = () => {}, shutdown = () => {}, connections, chunks, publicGateway = false, gatewayPort, idleTimeout = 120000 } = {}) {
   const rate = new Map();
   function throttle(req) {
     const key = req.socket.remoteAddress;
@@ -134,7 +134,7 @@ export function createHandler(app, network, { openFolder = () => {}, shutdown = 
           app.decide(deviceMatch[1], approve === true); return json(res, 200, { ok: true });
         }
         if (path === '/api/upload' && method === 'POST') {
-          req.setTimeout?.(30 * 60 * 1000);
+          req.setTimeout?.(idleTimeout);
           let name; try { name = decodeURIComponent(req.headers['x-file-name'] || 'Fichier'); } catch { throw new AppError(400, 'Nom de fichier invalide.'); }
           const size = req.headers['x-file-size'];
           if (size === undefined || !/^\d+$/.test(size)) throw new AppError(400, 'Taille du fichier manquante.');
@@ -148,7 +148,7 @@ export function createHandler(app, network, { openFolder = () => {}, shutdown = 
           if (!chunkMatch[2] && method === 'POST') {
             const offset = req.headers['x-chunk-offset'];
             if (!/^\d+$/.test(offset || '')) throw new AppError(400, 'Position du bloc manquante.');
-            req.setTimeout?.(120000);
+            req.setTimeout?.(idleTimeout);
             return json(res, 200, await chunks.append(chunkMatch[1], actor, Number(offset), req));
           }
           if (!chunkMatch[2] && method === 'DELETE') { chunks.get(chunkMatch[1], actor); await chunks.discard(chunkMatch[1]); return json(res, 200, { ok: true }); }
@@ -173,7 +173,8 @@ export function createHandler(app, network, { openFolder = () => {}, shutdown = 
           const controller = new AbortController();
           const id = crypto.randomUUID();
           const transfer = { id, ownerId: actor.id, name: file.name, size: length, bytes: 0, direction: 'download', sender: actor.name, startedAt: Date.now(), controller };
-          app.active.set(id, transfer);
+          app.active.set(id, transfer); app.emit('change');
+          res.setTimeout?.(idleTimeout, () => res.destroy());
           const meter = new Transform({ transform(chunk, _, done) { transfer.bytes += chunk.length; done(null, chunk); } });
           try {
             await pipeline(createReadStream(file.path, { start, end }), meter, res, { signal: controller.signal });
