@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#191b1f">
+  <meta name="color-scheme" content="dark">
+  <title>Brise</title>
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/common.js" defer></script>
+  <script src="/phone.js" defer></script>
+</head>
+<body class="phone-mode">
+  <div id="boot" class="boot"><img src="/icon.svg" width="58" height="58" alt=""><p>Chargement…</p><span class="loader"></span></div>
+  <div id="shell" class="shell" hidden>
+    <header class="appbar">
+      <span class="brand"><img src="/icon.svg" width="26" height="26" alt=""><span>Brise</span></span>
+      <div class="appbar-actions"><div class="network-pill" id="network-status"><i class="status-dot"></i><span>Réseau local</span></div><button class="icon-button" data-action="help" aria-label="Aide" title="Aide"><span data-icon="help"></span></button></div>
+    </header>
+    <main id="main" tabindex="-1">
+      <section id="phone-content">
+        <div id="pair-screen"><h1>Connexion au PC</h1><p class="phone-intro">Choisissez un nom pour identifier votre téléphone.</p><form id="pair-form"><label for="device-name">Nom de l’appareil</label><input id="device-name" name="name" maxlength="48" autocomplete="off" placeholder="Mon iPhone" required><button class="button primary full-width" type="submit">Demander la connexion</button></form><p class="privacy-note">La connexion doit être acceptée sur le PC.</p></div>
+        <div id="waiting-screen" hidden><h1>En attente de validation</h1><p class="phone-intro">Vérifiez que le PC affiche le même code, puis acceptez la connexion.</p><div id="pair-code" class="pair-code"></div><p class="privacy-note"><span class="loader"></span>En attente du PC…</p></div>
+        <div id="phone-workspace" hidden><h1>Transferts</h1><div class="phone-tabs" role="tablist" aria-label="Sens du transfert"><button role="tab" aria-selected="true" aria-controls="phone-send" id="tab-send" data-phone-tab="send"><span data-icon="upload"></span>Envoyer au PC</button><button role="tab" aria-selected="false" aria-controls="phone-receive" id="tab-receive" data-phone-tab="receive"><span data-icon="download"></span>Recevoir <span id="phone-file-count" class="counter">0</span></button></div><div id="phone-send" role="tabpanel" aria-labelledby="tab-send"><div id="drop-phone" class="dropzone phone-drop" role="button" tabindex="0" aria-label="Choisir des fichiers à envoyer au PC"><span class="upload-symbol" data-icon="upload"></span><h2>Envoyer des fichiers</h2><p>Photos, vidéos ou documents</p><span class="button primary">Choisir des fichiers</span><span class="drop-hint">10 Go maximum par fichier</span></div><div id="phone-upload-list" aria-live="polite"></div></div><div id="phone-receive" role="tabpanel" aria-labelledby="tab-receive" hidden><div id="phone-file-list" class="file-list"></div></div><div class="phone-connected"><span data-icon="monitor"></span><strong>Connecté au PC</strong><i class="status-dot"></i></div></div>
+        <div id="error-screen" hidden><h1>Connexion fermée</h1><p class="phone-intro" id="session-error">Scannez le QR code affiché sur le PC pour vous reconnecter.</p><button class="button secondary" data-action="refresh"><span data-icon="refresh"></span>Réessayer</button></div>
+      </section>
+    </main>
+  </div>
+  <input type="file" id="file-picker" multiple hidden>
+  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
+  <dialog id="dialog"><div class="dialog-heading"><h2 id="dialog-title"></h2><button class="icon-button" data-action="close-dialog" aria-label="Fermer"><span data-icon="x"></span></button></div><div id="dialog-body"></div></dialog>
+</body>
+</html>

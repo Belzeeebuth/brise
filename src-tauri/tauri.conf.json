@@ -1,0 +1,38 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Brise",
+  "version": "0.2.0",
+  "identifier": "fr.brise.Brise",
+  "build": {
+    "frontendDist": "../ui"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [
+      {
+        "label": "main",
+        "title": "Brise",
+        "width": 1200,
+        "height": 800,
+        "minWidth": 760,
+        "minHeight": 560,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["deb", "rpm", "appimage"],
+    "category": "Utility",
+    "shortDescription": "Partagez vos fichiers avec votre téléphone",
+    "longDescription": "Brise transfère des fichiers entre votre PC Linux et n’importe quel téléphone, sans application à installer sur le téléphone : un QR code suffit.",
+    "icon": ["icons/32x32.png", "icons/64x64.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.png"],
+    "linux": {
+      "deb": { "depends": ["libayatana-appindicator3-1"] },
+      "rpm": { "depends": ["libayatana-appindicator-gtk3"] }
+    }
+  }
+}
