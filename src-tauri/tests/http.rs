@@ -81,6 +81,14 @@ async fn the_page_has_strict_headers_and_hostile_requests_are_refused() {
     assert_eq!(send(&app, "GET", "/api/files/00000000-0000-0000-0000-000000000000", &[], "").await.status, StatusCode::UNAUTHORIZED);
     assert_eq!(send(&app, "GET", "/../../src/server.rs", &[], "").await.status, StatusCode::NOT_FOUND);
     assert_eq!(send(&app, "GET", "/api/admin/login", &[], "").await.status, StatusCode::NOT_FOUND);
+    for (path, kind) in [("/i18n.js", "text/javascript"), ("/phone.css", "text/css"), ("/fonts/manrope-latin.woff2", "font/woff2"), ("/fonts/manrope-latin-ext.woff2", "font/woff2")] {
+        let reply = send(&app, "GET", path, &[], "").await;
+        assert_eq!(reply.status, StatusCode::OK, "{path}");
+        assert!(reply.headers["content-type"].to_str().unwrap().starts_with(kind), "{path}");
+    }
+    let refused = send(&app, "POST", "/api/pair", &[], json!({ "code": "faux", "name": "x" }).to_string()).await;
+    assert_eq!(refused.status, StatusCode::FORBIDDEN);
+    assert_eq!(refused.json(), json!({ "error": "qr_expired" }));
 }
 
 #[tokio::test]
@@ -113,6 +121,7 @@ async fn a_phone_pairs_uploads_in_blocks_and_downloads_with_ranges() {
     brise.share_paths(std::slice::from_ref(&original)).unwrap();
     let state = send(&app, "GET", "/api/state", &auth, "").await.json();
     assert_eq!(state["files"].as_array().unwrap().len(), 1);
+    assert_eq!(state["pc"], json!(brise_lib::network::hostname()));
     assert!(state.get("receiveDir").is_none());
     let file = format!("/api/files/{}", state["files"][0]["id"].as_str().unwrap());
     let full = send(&app, "GET", &file, &auth, "").await;

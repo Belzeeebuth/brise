@@ -1,6 +1,6 @@
 [package]
 name = "brise"
-version = "0.2.0"
+version = "0.3.0"
 description = "Partagez vos fichiers entre votre PC et votre téléphone"
 authors = ["ana"]
 edition = "2021"
@@ -14,7 +14,7 @@ crate-type = ["rlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-tauri = { version = "2", features = ["tray-icon", "image-png"] }
+tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
 tauri-plugin-dialog = "2"

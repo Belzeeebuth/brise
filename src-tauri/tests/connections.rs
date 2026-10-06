@@ -175,7 +175,7 @@ async fn a_network_chosen_meanwhile_is_kept_and_a_lost_wifi_does_not_block_local
     c.select("local", None, false).unwrap();
     settle(&c).await;
     assert_eq!(c.view()["status"], "ready");
-    assert!(c.view()["message"].as_str().unwrap().contains("n’a pas pu être rétablie"));
+    assert_eq!(c.view()["message"], "wifi_not_restored");
     assert!(!s.brise.data_dir.join("hotspot.json").exists());
 }
 

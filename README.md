@@ -13,6 +13,10 @@ un QR code suffit.
 - Envois du téléphone par blocs, avec reprise automatique après une coupure.
 - Trois modes : réseau local, Internet (tunnel Cloudflare) et point d’accès
   Wi-Fi créé par le PC.
+- Interface en français et en anglais, selon la langue du système (et celle du
+  navigateur côté téléphone) ; thème clair, sombre ou celui du système, au choix
+  dans les réglages.
+- Miniatures des photos reçues et partagées, ouverture directe des fichiers reçus.
 
 ## Installer
 
@@ -136,8 +140,12 @@ Organisation :
 - `network.rs` : interfaces réseau et QR codes ;
 - `lib.rs` : fenêtre, icône de la barre système, notifications et commandes de
   l’interface ;
-- `ui/` : interface du PC (`index.html`, `desktop.js`) et du téléphone
-  (`phone.html`, `phone.js`), avec `common.js` et `styles.css` en commun.
+- `i18n.rs` : langue du système et textes natifs (menu de l’icône, notifications) ;
+- `ui/` : interface du PC (`index.html`, `desktop.js`, `desktop.css`) et du
+  téléphone (`phone.html`, `phone.js`, `phone.css`). En commun : `styles.css`
+  (thèmes et composants), `common.js`, `i18n.js` (textes français et anglais,
+  y compris les codes d’erreur renvoyés par le moteur) et la police Manrope
+  (`ui/fonts`, licence SIL OFL).
 
 `src-tauri/examples/e2e_server.rs` lance le serveur seul et accepte
 automatiquement les téléphones, pour tester la page du téléphone dans un

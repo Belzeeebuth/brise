@@ -1,71 +1,87 @@
 'use strict';
 let state = null, pairCode = '', polling = false, pollTimer;
-let lastFiles = '', hadSession = false, errorCount = 0;
+let filesKey = '', hadSession = false, errorCount = 0, firstFiles = true;
 let uploads = [], uploading = false;
+const seenFiles = new Set();
 async function api(path, data, method = 'POST', timeout = 10000) {
-  const response = await fetch(path, { method, headers: { 'X-Brise':'1', ...(data === undefined ? {} : { 'Content-Type':'application/json' }) }, body: data === undefined ? undefined : JSON.stringify(data), signal: AbortSignal.timeout(timeout) });
-  let value; try { value = await response.json(); } catch { throw new Error('Le PC ne répond pas. Vérifiez la connexion.'); }
-  if (!response.ok) { const error = new Error(value.error || 'Une erreur est survenue.'); error.status = response.status; throw error; }
+  let response;
+  try { response = await fetch(path, { method, headers: { 'X-Brise':'1', ...(data === undefined ? {} : { 'Content-Type':'application/json' }) }, body: data === undefined ? undefined : JSON.stringify(data), signal: AbortSignal.timeout(timeout) }); }
+  catch { throw Object.assign(new Error(t('error.offline')), { status: 0 }); }
+  let value; try { value = await response.json(); } catch { throw Object.assign(new Error(t('error.offline')), { status: response.status }); }
+  if (!response.ok) throw Object.assign(new Error(errorText(value)), { status: response.status, code: value.error });
   return value;
 }
 function showShell() { $('#boot').hidden = true; $('#shell').hidden = false; }
-function phoneScreen(name) {
-  ['pair-screen','waiting-screen','phone-workspace','error-screen'].forEach(id => $(`#${id}`).hidden = id !== name);
+function screen(name) {
+  ['pair-screen', 'waiting-screen', 'workspace', 'error-screen'].forEach(id => { $(`#${id}`).hidden = id !== name; });
 }
 function showError(message) {
-  showShell(); phoneScreen('error-screen');
-  $('#session-error').textContent = message;
+  showShell(); screen('error-screen'); $('#status-chip').hidden = true;
+  $('#error-text').textContent = message;
 }
-const mediaTypes = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', heic:'image/heic', webp:'image/webp', gif:'image/gif', avif:'image/avif', mp4:'video/mp4', mov:'video/quicktime', m4v:'video/x-m4v', webm:'video/webm' };
+function statusChip(text, kind = '') {
+  $('#status-chip').hidden = false;
+  $('#status-chip .dot').className = `dot ${kind}`;
+  $('#status-text').textContent = text;
+}
+const mediaTypes = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', heic:'image/heic', heif:'image/heif', webp:'image/webp', gif:'image/gif', avif:'image/avif', mp4:'video/mp4', mov:'video/quicktime', m4v:'video/x-m4v', webm:'video/webm' };
 const mediaType = name => mediaTypes[name.split('.').pop().toLowerCase()];
 const shareLimit = 500 * 1000 * 1000;
 const canShareFiles = (() => { try { return window.isSecureContext && !!navigator.canShare && navigator.canShare({ files:[new File([''], 'test.jpg', { type:'image/jpeg' })] }); } catch { return false; } })();
-const shareLabel = /iPhone|iPad/i.test(navigator.userAgent) ? 'Photos' : 'Partager';
+const isApple = /iPhone|iPad/i.test(navigator.userAgent);
 const prepared = new Map();
 function shareButton(file) {
   if (!canShareFiles || !mediaType(file.name) || file.size > shareLimit) return '';
-  const label = prepared.has(file.id) ? 'Enregistrer' : shareLabel;
-  return `<button class="button secondary" data-share="${file.id}" aria-label="${label} ${escape(file.name)}">${icon(fileType(file.name))}${label}</button>`;
+  const label = prepared.has(file.id) ? t('phone.save') : isApple ? t('phone.photos') : t('phone.share');
+  return `<button class="button secondary small" data-share="${file.id}">${icon(fileKind(file.name))}${escape(label)}</button>`;
 }
 async function shareFile(button) {
   const file = state?.files.find(f => f.id === button.dataset.share); if (!file) return;
   let shared = prepared.get(file.id);
   if (!shared) {
-    button.disabled = true; button.textContent = 'Préparation…';
+    button.disabled = true; button.textContent = t('phone.preparing', { percent: 0 });
     const response = await fetch(`/api/files/${file.id}`);
-    if (!response.ok || !response.body) throw new Error('Ce fichier n’est plus disponible.');
+    if (!response.ok || !response.body) throw new Error(t('error.file_unavailable'));
     const reader = response.body.getReader(), parts = []; let received = 0;
     for (;;) {
       const { done, value } = await reader.read(); if (done) break;
       parts.push(value); received += value.length;
-      button.textContent = `Préparation… ${Math.floor(received / Math.max(file.size, 1) * 100)} %`;
+      button.textContent = t('phone.preparing', { percent: Math.floor(received / Math.max(file.size, 1) * 100) });
     }
-    shared = new File(parts, file.name, { type:mediaType(file.name) });
+    shared = new File(parts, file.name, { type: mediaType(file.name) });
     prepared.set(file.id, shared);
-    button.innerHTML = `${icon(fileType(file.name))}Enregistrer`;
+    button.innerHTML = `${icon(fileKind(file.name))}${escape(t('phone.save'))}`;
   }
   try { await navigator.share({ files:[shared] }); }
   catch (error) {
-    if (error.name === 'NotAllowedError') toast('Fichier prêt : touchez « Enregistrer ».');
+    if (error.name === 'NotAllowedError') toast(t('phone.ready_tap'));
     else if (error.name !== 'AbortError') throw error;
   }
 }
 function fileRow(file) {
-  const type = fileType(file.name);
-  return `<div class="file-row"><span class="file-icon ${type}">${icon(type)}</span><div class="file-meta"><span class="file-name" title="${escape(file.name)}">${escape(file.name)}</span><div class="file-details"><span>${formatSize(file.size)}</span><span>·</span><span>Depuis votre PC</span></div></div>${shareButton(file)}<a class="button secondary" href="/api/files/${file.id}" download aria-label="Télécharger ${escape(file.name)}">${icon('download')}Recevoir</a></div>`;
+  const isNew = !firstFiles && !seenFiles.has(file.id);
+  seenFiles.add(file.id);
+  return `<div class="row${isNew ? ' fresh' : ''}">${kindTile(file.name)}<div class="row-main"><span class="row-name" title="${escape(file.name)}">${escape(file.name)}</span><span class="row-meta">${formatSize(file.size)}</span></div><div class="row-actions">${shareButton(file)}<a class="button secondary small" href="/api/files/${file.id}" download>${icon('download')}${escape(t('phone.download'))}</a></div></div>`;
 }
 function updateState(next) {
   state = next; hadSession = true; errorCount = 0;
   showShell();
-  $('#network-status').classList.remove('offline');
-  $('#network-status span').textContent = modeLabel(next.connectionMode || 'local');
-  if (next.status === 'pending') { phoneScreen('waiting-screen'); $('#pair-code').textContent = next.code?.replace(/(.{3})/, '$1 '); return; }
-  phoneScreen('phone-workspace');
-  $('#phone-file-count').textContent = next.files.length;
+  if (next.status === 'pending') {
+    screen('waiting-screen'); statusChip(t('device.pending'), 'warn live');
+    $('#pair-code').innerHTML = String(next.code || '').split('').map((c, i) => `${i === 3 ? '<span class="gap"></span>' : ''}<span>${escape(c)}</span>`).join('');
+    return;
+  }
+  screen('workspace');
+  statusChip(next.pc ? t('phone.connected_to', { pc: next.pc }) : t('phone.connected'));
+  $('#file-count').hidden = !next.files.length;
+  $('#file-count').textContent = next.files.length;
   for (const id of prepared.keys()) if (!next.files.some(f => f.id === id)) prepared.delete(id);
-  const key = JSON.stringify(next.files);
-  if (key !== lastFiles) { $('#phone-file-list').innerHTML = next.files.length ? next.files.map(fileRow).join('') : empty('Aucun fichier disponible', 'Ajoutez des fichiers dans Brise sur votre PC.'); lastFiles = key; }
-  renderTransfers();
+  const key = JSON.stringify([lang, next.files.map(f => [f.id, f.name, f.size])]);
+  if (key !== filesKey) {
+    $('#file-list').innerHTML = next.files.length ? next.files.map(fileRow).join('') : emptyState('laptop', t('phone.files.empty.title'), t('phone.files.empty.text'));
+    filesKey = key; firstFiles = false;
+  }
+  renderUploads();
 }
 async function refresh() {
   if (polling) return;
@@ -73,66 +89,68 @@ async function refresh() {
   try { updateState(await api('/api/state', undefined, 'GET')); }
   catch (error) {
     if (error.status === 401) {
-      clearTimeout(pollTimer);
-      showError('Cette connexion est fermée. Scannez le QR code sur le PC pour vous reconnecter.');
-      hadSession = false;
+      clearTimeout(pollTimer); hadSession = false;
+      showError(t('phone.error.closed'));
     } else {
-      errorCount++; $('#network-status').classList.add('offline');
-      $('#network-status span').textContent = 'Reconnexion…';
-      if (!hadSession) showError(error.message || 'Impossible de joindre Brise. Vérifiez votre réseau.');
+      errorCount++; statusChip(t('phone.reconnecting'), 'warn live');
+      if (!hadSession) showError(t('phone.error.unreachable'));
     }
   } finally { polling = false; }
   clearTimeout(pollTimer);
   if (hadSession) pollTimer = setTimeout(refresh, Math.min(errorCount ? 3000 : document.hidden ? 5000 : 1500, 10000));
 }
-function switchPhoneTab(tab) {
-  $$('[data-phone-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.phoneTab === tab)));
-  $('#phone-send').hidden = tab !== 'send'; $('#phone-receive').hidden = tab !== 'receive';
-}
 function uploadCaption(item) {
-  const percentage = item.size ? Math.floor(item.bytes / item.size * 100) : 0;
-  return item.status === 'queued' ? 'Dans la file d’attente' : item.retrying ? 'Connexion perdue, nouvel essai…' : percentage >= 100 ? 'Finalisation sur le PC…' : 'Envoi au PC…';
+  if (item.status === 'queued') return t('upload.queued');
+  if (item.retrying) return t('upload.retrying');
+  if (item.status === 'done') return t('upload.done');
+  if (item.status === 'cancelled') return t('upload.cancelled');
+  if (item.status === 'error') return item.error;
+  return percentOf(item.bytes, item.size) >= 100 ? t('upload.finishing') : `${t('upload.sending')} ${formatSize(item.bytes)} / ${formatSize(item.size)}`;
 }
-function resultRow(u) {
-  const label = u.status === 'done' ? 'Transfert terminé' : u.status === 'cancelled' ? 'Envoi annulé' : u.error;
-  return `<div class="upload-result ${u.status === 'error' ? 'error' : ''}"><span>${icon(u.status === 'done' ? 'check-circle' : 'alert')}</span><div><p>${escape(u.name)}</p><span class="muted small">${escape(label)}</span></div>${u.status === 'error' ? `<button class="text-button" data-retry="${u.id}">Réessayer</button>` : ''}</div>`;
+function uploadRow(item) {
+  const active = ['queued', 'uploading'].includes(item.status);
+  const action = active ? `<button class="icon-button small" data-cancel="${item.id}" aria-label="${escape(t('upload.cancel', { name: item.name }))}">${icon('x')}</button>`
+    : item.status === 'error' ? `<button class="button secondary small" data-retry="${item.id}">${icon('refresh')}${escape(t('action.retry'))}</button>`
+    : item.status === 'done' ? `<span class="status ok">${icon('check')}</span>` : '';
+  return `<div class="upload ${item.status}${item.isNew ? ' fresh' : ''}">${kindTile(item.name)}<div class="row-main"><span class="row-name">${escape(item.name)}</span><span class="row-meta">${escape(uploadCaption(item))}</span>${item.status === 'uploading' ? progressBar(percentOf(item.bytes, item.size), item.name) : ''}</div>${action}</div>`;
 }
-function renderTransfers() {
-  const pending = uploads.filter(u => ['queued','uploading'].includes(u.status));
-  const recent = uploads.filter(u => ['done','error','cancelled'].includes(u.status)).slice(-8).reverse();
-  $('#phone-upload-list').innerHTML = pending.map(u => transferRow(u, uploadCaption(u), true)).join('') + recent.map(resultRow).join('');
+function renderUploads() {
+  const active = uploads.filter(u => ['queued', 'uploading'].includes(u.status));
+  const recent = uploads.filter(u => ['done', 'error', 'cancelled'].includes(u.status)).slice(-8).reverse();
+  $('#uploads').innerHTML = active.concat(recent).map(uploadRow).join('');
+  uploads.forEach(u => { u.isNew = false; });
 }
 function addFiles(files) {
-  if (!state || state.status !== 'approved') return toast('Connectez d’abord votre téléphone au PC.', true);
+  if (!state || state.status !== 'approved') return toast(t('upload.connect_first'), 'error');
   for (const file of files) {
-    if (file.size > state.maxFileSize) { toast(`${file.name} dépasse la limite de 10 Go.`, true); continue; }
-    uploads.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file, name:file.name, size:file.size, bytes:0, status:'queued' });
+    if (file.size > state.maxFileSize) { toast(t('upload.too_big', { name: file.name }), 'error'); continue; }
+    uploads.push({ id: `${Date.now()}-${Math.random().toString(36).slice(2)}`, file, name: file.name, size: file.size, bytes: 0, status: 'queued', isNew: true });
   }
-  switchPhoneTab('send'); renderTransfers(); processQueue();
+  renderUploads(); processQueue();
 }
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 function xhrUpload(item, path, blob, headers, offset = 0) {
   return new Promise((resolve, reject) => {
-    if (item.status === 'cancelled') return reject(new Error('Envoi annulé.'));
+    if (item.status === 'cancelled') return reject(new Error(t('upload.cancelled')));
     const xhr = new XMLHttpRequest(); item.xhr = xhr;
     const fail = (message, status = 0) => reject(Object.assign(new Error(message), { status }));
     xhr.open('POST', path); xhr.setRequestHeader('X-Brise', '1');
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     for (const [key, value] of Object.entries(headers)) xhr.setRequestHeader(key, value);
     xhr.timeout = 10 * 60 * 1000;
-    xhr.upload.onprogress = event => { item.bytes = offset + event.loaded; item.retrying = false; renderTransfers(); };
+    xhr.upload.onprogress = event => { item.bytes = offset + event.loaded; item.retrying = false; renderUploads(); };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) return resolve();
-      let message; try { message = JSON.parse(xhr.responseText).error; } catch {}
-      fail(message || 'Le transfert n’a pas abouti. Réessayez.', xhr.status);
+      let body = {}; try { body = JSON.parse(xhr.responseText); } catch {}
+      fail(errorText(body), xhr.status);
     };
-    xhr.onerror = () => fail('Connexion interrompue. Vérifiez le réseau, puis réessayez.');
-    xhr.ontimeout = () => fail('Le transfert a pris trop de temps. Réessayez.');
-    xhr.onabort = () => fail('Envoi annulé.');
+    xhr.onerror = () => fail(t('error.offline'));
+    xhr.ontimeout = () => fail(t('error.idle'));
+    xhr.onabort = () => fail(t('upload.cancelled'));
     xhr.send(blob);
   });
 }
-function checkCancelled(item) { if (item.status === 'cancelled') throw new Error('Envoi annulé.'); }
+function checkCancelled(item) { if (item.status === 'cancelled') throw new Error(t('upload.cancelled')); }
 function discardRemote(item) {
   const id = item.remoteId; item.remoteId = null;
   if (id) api(`/api/uploads/${id}`, undefined, 'DELETE').catch(() => {});
@@ -152,18 +170,18 @@ async function sendChunks(item) {
         checkCancelled(item);
         await api(`/api/uploads/${item.remoteId}/finish`);
       }
-      item.retrying = false; renderTransfers();
+      item.retrying = false; renderUploads();
       for (;;) {
         checkCancelled(item);
         const completion = await api(`/api/uploads/${item.remoteId}`, undefined, 'GET');
-        if (completion.status === 'error') throw Object.assign(new Error(completion.error), { final: true });
+        if (completion.status === 'error') throw Object.assign(new Error(errorText(completion.error)), { final: true });
         if (completion.status === 'done') return;
         await pause(700);
       }
     } catch (error) {
       if (item.status === 'cancelled' || error.final || [401, 403, 404, 507].includes(error.status)) throw error;
-      if (attempt >= 5) throw Object.assign(new Error('Envoi interrompu. « Réessayer » reprend là où il s’est arrêté.'), { resumable: true });
-      item.retrying = true; renderTransfers();
+      if (attempt >= 5) throw Object.assign(new Error(t('upload.interrupted')), { resumable: true });
+      item.retrying = true; renderUploads();
       await pause(Math.min(1000 * 2 ** attempt, 15000));
     }
   }
@@ -197,70 +215,68 @@ async function processQueue() {
   try {
     for (;;) {
       const item = uploads.find(u => u.status === 'queued'); if (!item) break;
-      item.status = 'uploading'; renderTransfers();
+      item.status = 'uploading'; renderUploads();
       try {
         await sendFile(item);
         item.status = 'done'; item.file = null;
-        toast(`${item.name} reçu sur le PC.`);
+        toast(t('toast.received_pc', { name: item.name }));
       } catch (error) {
-        if (item.status !== 'cancelled') { item.status = 'error'; item.error = error.message; toast(error.message, true); }
-      } finally { item.xhr = null; item.retrying = false; renderTransfers(); await refresh(); }
+        if (item.status !== 'cancelled') { item.status = 'error'; item.error = error.message; toast(error.message, 'error'); }
+      } finally { item.xhr = null; item.retrying = false; renderUploads(); await refresh(); }
     }
   } finally { uploading = false; keepAwake(false); uploads = uploads.filter(u => u.status !== 'done').concat(uploads.filter(u => u.status === 'done').slice(-8)); }
 }
 function help() {
-  dialog('Aide', `<h3>Se connecter</h3><p>Scannez le QR code affiché par Brise sur le PC, donnez un nom à ce téléphone, vérifiez que le code est le même sur les deux écrans puis acceptez sur le PC.</p><h3>Transférer des fichiers</h3><p>« Recevoir » liste les fichiers partagés par le PC. « Envoyer au PC » envoie vos photos, vidéos ou documents. Gardez la page ouverte pendant l’envoi : si l’écran se verrouille ou si la connexion saute, l’envoi reprend là où il s’était arrêté.</p><p>Sur iPhone, les fichiers reçus vont dans l’app Fichiers. En mode Internet, le bouton « Photos » enregistre directement les images et vidéos dans Photos.</p><div class="dialog-section"><h3>Connexion impossible</h3><p>Vérifiez que le téléphone est sur le même réseau que le PC (ou sur son point d’accès Wi-Fi). Un réseau invité peut isoler les appareils. Si le téléphone indique « Pas d’Internet » sur le point d’accès de Brise, restez connecté à ce Wi-Fi.</p></div>`);
+  openDialog(t('help.title'), [1, 2, 3, 4].map(n => `<div class="section"><p>${escape(t(`phone.help.text${n}`))}</p></div>`).join(''));
 }
 document.addEventListener('click', async event => {
-  const button = event.target.closest('button,[data-action]'); if (!button) return;
+  const el = event.target.closest('button'); if (!el || el.closest('[data-close]')) return;
   try {
-    if (button.dataset.phoneTab) switchPhoneTab(button.dataset.phoneTab);
-    if (button.dataset.share) await shareFile(button);
-    if (button.dataset.cancel) { const item = uploads.find(u => u.id === button.dataset.cancel); if (item) { item.status = 'cancelled'; item.xhr?.abort(); discardRemote(item); item.file = null; renderTransfers(); } }
-    if (button.dataset.retry) { const item = uploads.find(u => u.id === button.dataset.retry); if (item?.file) { item.status = 'queued'; if (!item.remoteId) item.bytes = 0; processQueue(); } }
-    if (button.dataset.action === 'help') help();
-    if (button.dataset.action === 'refresh') { hadSession = true; await refresh(); }
-  } catch (error) { toast(error.message, true); }
-  finally { button.disabled = false; }
+    if (el.dataset.share) await shareFile(el);
+    if (el.dataset.cancel) { const item = uploads.find(u => u.id === el.dataset.cancel); if (item) { item.status = 'cancelled'; item.xhr?.abort(); discardRemote(item); item.file = null; renderUploads(); } }
+    if (el.dataset.retry) { const item = uploads.find(u => u.id === el.dataset.retry); if (item?.file) { item.status = 'queued'; if (!item.remoteId) item.bytes = 0; renderUploads(); processQueue(); } }
+    if (el.id === 'send-card') $('#file-picker').click();
+    if (el.dataset.action === 'help') help();
+    if (el.dataset.action === 'refresh') { hadSession = true; await refresh(); }
+  } catch (error) { toast(error.message, 'error'); }
+  finally { el.disabled = false; }
 });
 document.addEventListener('submit', async event => {
   if (event.target.id !== 'pair-form') return;
   event.preventDefault(); const submit = event.target.querySelector('button[type=submit]'); submit.disabled = true;
-  try { await api('/api/pair', { code:pairCode, name:$('#device-name').value.trim() || 'Mon téléphone' }); pairCode = ''; await refresh(); }
-  catch (error) { toast(error.message, true); }
+  try { await api('/api/pair', { code: pairCode, name: $('#device-name').value.trim() }); pairCode = ''; await refresh(); }
+  catch (error) { toast(error.message, 'error'); }
   finally { submit.disabled = false; }
 });
 document.addEventListener('change', event => {
   if (event.target.id === 'file-picker') { addFiles([...event.target.files]); event.target.value = ''; }
 });
 let dragDepth = 0;
-document.addEventListener('dragenter', event => { if (!event.dataTransfer.types.includes('Files') || state?.status !== 'approved') return; event.preventDefault(); dragDepth++; document.body.classList.add('dragging'); });
+document.addEventListener('dragenter', event => { if (!event.dataTransfer.types.includes('Files') || state?.status !== 'approved') return; event.preventDefault(); dragDepth++; });
 document.addEventListener('dragover', event => { if (event.dataTransfer.types.includes('Files')) event.preventDefault(); });
-document.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); if (!dragDepth) document.body.classList.remove('dragging'); });
+document.addEventListener('dragleave', () => { dragDepth = Math.max(0, dragDepth - 1); });
 document.addEventListener('drop', event => {
-  event.preventDefault(); dragDepth = 0; document.body.classList.remove('dragging');
+  event.preventDefault(); dragDepth = 0;
   const items = [...(event.dataTransfer.items || [])];
-  const files = items.length ? items.filter(i => { if (i.webkitGetAsEntry?.()?.isDirectory) { toast('Sélectionnez des fichiers, ou compressez votre dossier en ZIP.', true); return false; } return i.kind === 'file'; }).map(i => i.getAsFile()).filter(Boolean) : [...event.dataTransfer.files];
+  const files = items.length ? items.filter(i => { if (i.webkitGetAsEntry?.()?.isDirectory) { toast(t('error.only_files'), 'error'); return false; } return i.kind === 'file'; }).map(i => i.getAsFile()).filter(Boolean) : [...event.dataTransfer.files];
   addFiles(files);
-});
-document.addEventListener('keydown', event => {
-  if (['ArrowRight','ArrowLeft'].includes(event.key) && event.target.matches('[data-phone-tab]')) { event.preventDefault(); const tab = event.target.dataset.phoneTab === 'send' ? 'receive' : 'send'; switchPhoneTab(tab); $(`[data-phone-tab="${tab}"]`).focus(); }
 });
 document.addEventListener('visibilitychange', () => { if (!document.hidden && wakeWanted) keepAwake(true); if (!document.hidden && hadSession) refresh(); });
 window.addEventListener('online', () => { if (hadSession) refresh(); });
+function defaultName() {
+  const device = /iPad/i.test(navigator.userAgent) ? 'iPad' : /iPhone/i.test(navigator.userAgent) ? 'iPhone' : /Android/i.test(navigator.userAgent) ? 'Android' : t('phone.default_device');
+  return t('phone.default_name', { device });
+}
 async function init() {
-  $('#drop-phone').addEventListener('click', () => $('#file-picker').click());
-  $('#drop-phone').addEventListener('keydown', event => { if (['Enter',' '].includes(event.key)) { event.preventDefault(); $('#file-picker').click(); } });
-  if (location.protocol === 'https:') $('#network-status span').textContent = 'Internet';
   const fragment = location.hash.slice(1);
   if (fragment) history.replaceState(null, '', location.pathname);
   try {
     if (location.pathname === '/connect' && fragment) {
-      pairCode = fragment; showShell(); phoneScreen('pair-screen');
-      $('#device-name').value = /iPad/i.test(navigator.userAgent) ? 'Mon iPad' : /iPhone/i.test(navigator.userAgent) ? 'Mon iPhone' : /Android/i.test(navigator.userAgent) ? 'Mon Android' : 'Mon appareil';
+      pairCode = fragment; showShell(); screen('pair-screen');
+      $('#device-name').value = defaultName();
     } else {
       updateState(await api('/api/state', undefined, 'GET')); pollTimer = setTimeout(refresh, 1500);
     }
-  } catch (error) { showError(error.status === 401 ? 'Scannez le QR code affiché par Brise sur votre PC.' : error.message); }
+  } catch (error) { showError(error.status === 401 ? t('phone.error.scan') : error.message); }
 }
 document.addEventListener('DOMContentLoaded', init);

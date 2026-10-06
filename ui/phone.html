@@ -3,32 +3,71 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-  <meta name="theme-color" content="#191b1f">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#eef5f7" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#071116" media="(prefers-color-scheme: dark)">
   <title>Brise</title>
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/phone.css">
+  <script src="/i18n.js" defer></script>
   <script src="/common.js" defer></script>
   <script src="/phone.js" defer></script>
 </head>
-<body class="phone-mode">
-  <div id="boot" class="boot"><img src="/icon.svg" width="58" height="58" alt=""><p>Chargement…</p><span class="loader"></span></div>
-  <div id="shell" class="shell" hidden>
-    <header class="appbar">
-      <span class="brand"><img src="/icon.svg" width="26" height="26" alt=""><span>Brise</span></span>
-      <div class="appbar-actions"><div class="network-pill" id="network-status"><i class="status-dot"></i><span>Réseau local</span></div><button class="icon-button" data-action="help" aria-label="Aide" title="Aide"><span data-icon="help"></span></button></div>
+<body class="phone">
+  <div id="boot" class="boot"><img src="/icon.svg" alt=""><span class="spinner"></span></div>
+  <div id="shell" hidden>
+    <header class="phone-top">
+      <span class="brand"><img src="/icon.svg" alt=""><span>Brise</span></span>
+      <span id="status-chip" class="chip status-chip" hidden><span class="dot"></span><span id="status-text"></span></span>
+      <button class="icon-button" data-action="help" data-i18n-label="action.help" data-i18n-title="action.help"><span data-icon="help"></span></button>
     </header>
-    <main id="main" tabindex="-1">
-      <section id="phone-content">
-        <div id="pair-screen"><h1>Connexion au PC</h1><p class="phone-intro">Choisissez un nom pour identifier votre téléphone.</p><form id="pair-form"><label for="device-name">Nom de l’appareil</label><input id="device-name" name="name" maxlength="48" autocomplete="off" placeholder="Mon iPhone" required><button class="button primary full-width" type="submit">Demander la connexion</button></form><p class="privacy-note">La connexion doit être acceptée sur le PC.</p></div>
-        <div id="waiting-screen" hidden><h1>En attente de validation</h1><p class="phone-intro">Vérifiez que le PC affiche le même code, puis acceptez la connexion.</p><div id="pair-code" class="pair-code"></div><p class="privacy-note"><span class="loader"></span>En attente du PC…</p></div>
-        <div id="phone-workspace" hidden><h1>Transferts</h1><div class="phone-tabs" role="tablist" aria-label="Sens du transfert"><button role="tab" aria-selected="true" aria-controls="phone-send" id="tab-send" data-phone-tab="send"><span data-icon="upload"></span>Envoyer au PC</button><button role="tab" aria-selected="false" aria-controls="phone-receive" id="tab-receive" data-phone-tab="receive"><span data-icon="download"></span>Recevoir <span id="phone-file-count" class="counter">0</span></button></div><div id="phone-send" role="tabpanel" aria-labelledby="tab-send"><div id="drop-phone" class="dropzone phone-drop" role="button" tabindex="0" aria-label="Choisir des fichiers à envoyer au PC"><span class="upload-symbol" data-icon="upload"></span><h2>Envoyer des fichiers</h2><p>Photos, vidéos ou documents</p><span class="button primary">Choisir des fichiers</span><span class="drop-hint">10 Go maximum par fichier</span></div><div id="phone-upload-list" aria-live="polite"></div></div><div id="phone-receive" role="tabpanel" aria-labelledby="tab-receive" hidden><div id="phone-file-list" class="file-list"></div></div><div class="phone-connected"><span data-icon="monitor"></span><strong>Connecté au PC</strong><i class="status-dot"></i></div></div>
-        <div id="error-screen" hidden><h1>Connexion fermée</h1><p class="phone-intro" id="session-error">Scannez le QR code affiché sur le PC pour vous reconnecter.</p><button class="button secondary" data-action="refresh"><span data-icon="refresh"></span>Réessayer</button></div>
+    <main class="phone-main">
+      <section id="pair-screen" class="screen pair-layout" hidden>
+        <div class="hero card">
+          <svg class="breeze" viewBox="0 0 1200 400" preserveAspectRatio="none" aria-hidden="true"><path d="M-60 250 C 140 170, 300 330, 520 250 S 880 140, 1260 230"/><path d="M-60 300 C 180 230, 360 360, 600 290 S 940 210, 1260 300"/><path d="M-60 180 C 200 120, 380 240, 640 170 S 1000 90, 1260 160"/></svg>
+          <img class="hero-logo" src="/icon.svg" alt="">
+          <h1 data-i18n="phone.pair.title"></h1>
+          <p data-i18n="phone.pair.hero"></p>
+        </div>
+        <form id="pair-form" class="card form-card">
+          <p data-i18n="phone.pair.text"></p>
+          <label class="field"><span class="field-label" data-i18n="phone.pair.name"></span><input id="device-name" class="input large" maxlength="48" autocomplete="off" required></label>
+          <button class="button primary large block" type="submit"><span data-i18n="phone.pair.submit"></span></button>
+        </form>
+      </section>
+      <section id="waiting-screen" class="screen wait" hidden>
+        <span class="wait-ring"><span data-icon="laptop"></span></span>
+        <h1 data-i18n="phone.wait.title"></h1>
+        <p data-i18n="phone.wait.text"></p>
+        <div id="pair-code" class="code"></div>
+      </section>
+      <section id="workspace" class="screen workspace" hidden>
+        <div class="send-column">
+          <button id="send-card" class="send-card" type="button">
+            <span class="send-icon"><span data-icon="upload"></span></span>
+            <span class="send-copy"><strong data-i18n="phone.send.title"></strong><span data-i18n="phone.send.text"></span></span>
+          </button>
+          <div id="uploads" class="uploads"></div>
+        </div>
+        <div class="files-column card">
+          <div class="files-head"><h2><span data-i18n="phone.files.title"></span><span id="file-count" class="count" hidden></span></h2></div>
+          <div id="file-list" class="rows"></div>
+        </div>
+      </section>
+      <section id="error-screen" class="screen wait" hidden>
+        <span class="wait-ring error"><span data-icon="alert"></span></span>
+        <h1 data-i18n="phone.error.title"></h1>
+        <p id="error-text"></p>
+        <button class="button secondary large" data-action="refresh"><span data-icon="refresh"></span><span data-i18n="action.retry"></span></button>
       </section>
     </main>
   </div>
   <input type="file" id="file-picker" multiple hidden>
-  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
-  <dialog id="dialog"><div class="dialog-heading"><h2 id="dialog-title"></h2><button class="icon-button" data-action="close-dialog" aria-label="Fermer"><span data-icon="x"></span></button></div><div id="dialog-body"></div></dialog>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <dialog id="dialog" class="modal">
+    <div class="modal-head"><h2 id="dialog-title"></h2><button class="icon-button" data-close data-i18n-label="action.close"><span data-icon="x"></span></button></div>
+    <div id="dialog-body" class="modal-body"></div>
+  </dialog>
 </body>
 </html>

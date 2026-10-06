@@ -189,7 +189,7 @@ async fn history_survives_a_restart_but_shares_and_sessions_do_not() {
         let device = phone(&brise);
         let shared = dir.path().join("partage.txt");
         std::fs::write(&shared, b"copie").unwrap();
-        assert_eq!(brise.share_paths(&[shared, dir.path().to_path_buf()]).unwrap(), 1);
+        assert_eq!(brise.share_paths(&[shared, dir.path().to_path_buf()]).unwrap().len(), 1);
         upload(&brise, &device, "durable.txt", b"conserver").await
     };
     let brise = open(&dir);

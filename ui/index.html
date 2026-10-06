@@ -3,50 +3,79 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="color-scheme" content="dark">
   <title>Brise</title>
+  <script src="theme.js"></script>
   <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="desktop.css">
+  <script src="i18n.js" defer></script>
   <script src="common.js" defer></script>
   <script src="desktop.js" defer></script>
 </head>
-<body>
-  <div id="boot" class="boot"><img src="icon.svg" width="58" height="58" alt=""><p>Chargement…</p><span class="loader"></span></div>
-  <div id="shell" class="shell" hidden>
-    <header class="appbar">
-      <span class="brand"><img src="icon.svg" width="26" height="26" alt=""><span>Brise</span></span>
-      <nav class="desktop-nav" aria-label="Navigation principale">
-        <button class="nav-item selected" data-view="transfer" aria-current="page"><span data-icon="transfer"></span>Transferts</button>
-        <button class="nav-item" data-view="devices"><span data-icon="devices"></span>Appareils<span class="counter" id="device-count">0</span></button>
-        <button class="nav-item" data-view="history"><span data-icon="clock"></span>Historique</button>
-      </nav>
-      <div class="appbar-actions"><div class="network-pill" id="network-status"><i class="status-dot"></i><span>Réseau local</span></div><button class="icon-button desktop-settings" data-action="settings" aria-label="Réglages" title="Réglages"><span data-icon="settings"></span></button><button class="icon-button" data-action="help" aria-label="Aide" title="Aide"><span data-icon="help"></span></button></div>
+<body class="desktop">
+  <div id="boot" class="boot"><img src="icon.svg" alt=""><span class="spinner"></span></div>
+  <div id="app" class="app" data-view="connect" hidden>
+    <header class="topbar">
+      <div class="brand"><img src="icon.svg" alt=""><span>Brise</span></div>
+      <div id="device-chips" class="device-chips"></div>
+      <div class="topbar-actions">
+        <button id="add-device" class="button secondary small" data-action="connect-dialog" hidden><span data-icon="plus"></span><span data-i18n="devices.add"></span></button>
+        <button id="mode-chip" class="chip mode-chip" data-action="modes"><span class="dot"></span><span class="mode-label"></span><svg class="icon chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+        <button class="icon-button" data-action="settings" data-i18n-title="action.settings" data-i18n-label="action.settings"><span data-icon="settings"></span></button>
+        <button class="icon-button" data-action="help" data-i18n-title="action.help" data-i18n-label="action.help"><span data-icon="help"></span></button>
+      </div>
     </header>
-    <main id="main" tabindex="-1">
-      <section id="desktop-content">
-        <div class="page-heading"><h1 id="page-title">Transferts</h1><p id="page-subtitle">Partagez des fichiers avec les appareils connectés.</p></div>
-        <section id="view-transfer" class="view">
-          <div class="workspace-grid">
-            <div class="transfer-area">
-              <div id="drop-desktop" class="dropzone" tabindex="0" role="button" aria-label="Choisir des fichiers à partager"><span class="upload-symbol" data-icon="upload"></span><div class="drop-copy"><h2>Déposer des fichiers</h2><p>Glissez des fichiers ici. Les originaux restent à leur place.</p></div><span class="button primary">Parcourir…</span></div>
-              <section id="pending-requests" class="pending-requests" aria-live="polite"></section>
-              <section id="active-section" class="list-section" hidden><div class="section-title"><h2>Transferts en cours</h2></div><div id="active-list"></div></section>
-              <section class="list-section"><div class="section-title"><h2>Fichiers partagés <span class="count-label" id="shared-count">0</span></h2></div><div id="shared-list" class="file-list"></div><p class="list-caption">Accessibles aux appareils autorisés.</p></section>
-            </div>
-            <aside class="connection-sidebar" aria-label="Connexion du téléphone">
-              <div class="connection-controls"><label for="connection-mode">Connexion</label><select id="connection-mode"><option value="local">Réseau local</option><option value="internet">Internet</option><option value="hotspot">Point d’accès Wi-Fi</option></select><p id="connection-status" role="status">PC et téléphone sur le même réseau.</p><button class="text-button" id="mode-retry" data-action="mode-setup" hidden>Réessayer</button></div>
-              <section id="hotspot-details" class="hotspot-details" hidden><h2>1. Rejoindre le Wi-Fi</h2><img id="wifi-qr" width="176" height="176" alt="QR code pour rejoindre le point d’accès Wi-Fi"><dl><dt>Réseau</dt><dd id="hotspot-ssid"></dd><dt>Mot de passe</dt><dd><code id="hotspot-password"></code></dd></dl><p>Scannez ce code ou utilisez les réglages Wi-Fi du téléphone, puis scannez le code Brise ci-dessous.</p></section>
-              <section class="connect-panel"><div class="panel-heading"><h2>Connecter un téléphone</h2><span data-icon="phone"></span></div><p class="muted">Scannez ce code avec l’appareil photo.</p><div class="qr-wrap"><img id="qr" alt="QR code de connexion" width="192" height="192" hidden><div id="qr-empty" class="qr-empty"><span data-icon="wifi"></span><p>Aucune adresse réseau sélectionnée.</p><button class="text-button" data-action="settings">Configurer le réseau</button></div></div><div class="connection-actions"><button class="button secondary" data-action="copy-link"><span data-icon="link"></span>Copier le lien</button><button class="icon-button" data-action="rotate" title="Renouveler le QR code" aria-label="Renouveler le QR code"><span data-icon="refresh"></span></button></div><div class="qr-expiry">Valide encore <span id="expiry">10:00</span></div><div class="connection-info"><span data-icon="wifi"></span><p>Le téléphone et le PC doivent être sur le même réseau local.</p></div></section>
-              <section class="connected-strip"><div><strong id="connected-label">Aucun appareil connecté</strong><p id="connected-detail">Scannez le QR code pour vous connecter.</p></div><button class="text-button" data-view="devices">Gérer les appareils <span data-icon="arrow-right"></span></button></section>
-            </aside>
-          </div>
-        </section>
-        <section id="view-devices" class="view" hidden><div class="section-title"><h2>Appareils autorisés</h2><button class="button secondary" data-view="transfer"><span data-icon="scan"></span>Connecter un appareil</button></div><div id="devices-list"></div></section>
-        <section id="view-history" class="view" hidden><div class="section-title"><h2>Reçus sur ce PC <span id="history-count" class="count-label">0</span></h2><button class="button secondary" data-action="folder"><span data-icon="folder"></span>Ouvrir le dossier</button></div><div class="history-note"><span data-icon="folder"></span><span id="receive-path"></span></div><div id="history-list" class="file-list"></div></section>
-        <footer class="footer"><span class="computer"><span data-icon="monitor"></span><span id="computer-name">Ce PC</span></span><span>Stockage local</span></footer>
+    <main class="hub">
+      <section id="connect-panel" class="panel card connect" aria-labelledby="connect-title"></section>
+      <section id="send-panel" class="panel card send">
+        <div class="panel-head">
+          <div><h2 id="send-title"></h2><p data-i18n="send.subtitle"></p></div>
+        </div>
+        <div class="panel-body">
+          <button id="dropzone" class="dropzone" type="button">
+            <span class="drop-icon"><span data-icon="upload"></span></span>
+            <span class="drop-copy"><strong data-i18n="send.drop"></strong><span data-i18n="send.drop_hint"></span></span>
+            <span class="button secondary"><span data-i18n="action.browse"></span></span>
+          </button>
+          <div id="shared-list" class="rows"></div>
+        </div>
       </section>
+      <section id="inbox-panel" class="panel card inbox">
+        <div class="panel-head">
+          <h2><span data-i18n="inbox.title"></span><span id="inbox-count" class="count" hidden></span></h2>
+          <button class="button ghost small" data-action="folder"><span data-icon="folder"></span><span data-i18n="inbox.open_folder"></span></button>
+        </div>
+        <div id="inbox-list" class="panel-body"></div>
+      </section>
+      <aside id="rail" class="panel card rail">
+        <div class="panel-head"><h2 data-i18n="devices.title"></h2></div>
+        <div class="panel-body"><div id="rail-devices" class="device-list"></div><div id="rail-connect"></div></div>
+      </aside>
     </main>
   </div>
-  <div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
-  <dialog id="dialog"><div class="dialog-heading"><h2 id="dialog-title"></h2><button class="icon-button" data-action="close-dialog" aria-label="Fermer"><span data-icon="x"></span></button></div><div id="dialog-body"></div></dialog>
+  <div class="drop-overlay" aria-hidden="true">
+    <div class="drop-card">
+      <svg class="breeze" viewBox="0 0 1200 400" preserveAspectRatio="none"><path d="M-60 250 C 140 170, 300 330, 520 250 S 880 140, 1260 230"/><path d="M-60 300 C 180 230, 360 360, 600 290 S 940 210, 1260 300"/><path d="M-60 180 C 200 120, 380 240, 640 170 S 1000 90, 1260 160"/></svg>
+      <span class="drop-icon"><span data-icon="upload"></span></span>
+      <strong data-i18n="drop.title"></strong>
+      <p id="drop-text"></p>
+    </div>
+  </div>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <dialog id="dialog" class="modal">
+    <div class="modal-head"><h2 id="dialog-title"></h2><button class="icon-button" data-close data-i18n-label="action.close"><span data-icon="x"></span></button></div>
+    <div id="dialog-body" class="modal-body"></div>
+  </dialog>
+  <dialog id="pair-dialog" class="modal pair">
+    <div class="pair-body">
+      <span class="avatar pair-ring"><span data-icon="phone"></span></span>
+      <h2 id="pair-title"></h2>
+      <p data-i18n="pair.text"></p>
+      <div id="pair-code" class="code"></div>
+      <div class="modal-actions">
+        <button class="button secondary large" data-pair="decline"><span data-i18n="action.decline"></span></button>
+        <button class="button primary large" data-pair="accept" autofocus><span data-icon="check"></span><span data-i18n="action.accept"></span></button>
+      </div>
+    </div>
+  </dialog>
 </body>
 </html>

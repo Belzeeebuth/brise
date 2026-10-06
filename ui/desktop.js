@@ -1,197 +1,365 @@
 'use strict';
-const { invoke } = window.__TAURI__.core;
-const { listen } = window.__TAURI__.event;
-let state = null, refreshing = false, again = false;
-let lastFiles = '', lastDevices = '', lastQr = '', lastHotspot = '', lastTransfers = '';
+const TAURI = window.__TAURI__;
+const invoke = TAURI.core.invoke;
+const listen = TAURI.event.listen;
+const appWindow = TAURI.window?.getCurrentWindow?.();
+const assetUrl = path => TAURI.core.convertFileSrc(path);
+let state = null, refreshing = false, again = false, firstRender = true;
+let themeChoice = 'system', systemDark = matchMedia('(prefers-color-scheme: dark)').matches;
+let lastPairId = null, modeDraft = null, dialogKind = null;
+const keys = {};
+const seen = { shared: new Set(), received: new Set(), devices: new Set() };
+const qrCache = { pair: { key: '', src: '' }, wifi: { key: '', src: '' } };
+let approvedBefore = null;
+
 async function call(command, args) {
   try { return await invoke(command, args); }
-  catch (error) { throw new Error(typeof error === 'string' ? error : error?.message || 'Une erreur est survenue.'); }
+  catch (error) { throw new Error(errorText(error)); }
 }
 const svgData = svg => `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
-function fileRow(file, mode) {
-  const type = fileType(file.name);
-  const detail = mode === 'history' ? `${escape(file.sender)} · ${formatDate(file.createdAt)}` : file.downloads ? `${file.downloads} téléchargement${file.downloads > 1 ? 's' : ''}` : 'En attente de téléchargement';
-  const actions = mode === 'shared'
-    ? `<span class="file-status">${icon(file.downloads ? 'check-circle' : 'check')}${file.downloads ? 'Récupéré' : 'Disponible'}</span><button class="icon-button" data-remove="${file.id}" aria-label="Retirer du partage ${escape(file.name)}" title="Retirer du partage">${icon('x')}</button>`
-    : `<button class="icon-button reveal" data-reveal="${file.id}" aria-label="Afficher ${escape(file.name)} dans le dossier" title="Afficher dans le dossier">${icon('folder')}</button>`;
-  return `<div class="file-row"><span class="file-icon ${type}">${icon(type)}</span><div class="file-meta"><span class="file-name" title="${escape(file.name)}">${escape(file.name)}</span><div class="file-details"><span>${formatSize(file.size)}</span><span>·</span><span>${detail}</span></div></div>${actions}</div>`;
+function patch(element, key, html) {
+  if (!element || keys[element.id] === key) return false;
+  keys[element.id] = key; element.innerHTML = html; return true;
 }
-function deviceCard(d) {
-  const pending = d.status === 'pending';
-  return `<article class="device-card ${pending ? 'pending' : ''}"><span class="device-icon">${icon('phone')}</span><div class="device-info"><strong>${escape(d.name)}</strong><p>${pending ? 'Souhaite se connecter · code ' + `<code>${escape(d.code.replace(/(.{3})/, '$1 '))}</code>` : d.online ? 'Connecté · prêt à partager' : 'En veille · ouvrez Brise sur le téléphone'}</p></div><div class="device-actions">${pending ? `<button class="button secondary" data-decide="${d.id}" data-approve="false">Refuser</button><button class="button primary" data-decide="${d.id}" data-approve="true">${icon('check')}Accepter</button>` : `<button class="button secondary" data-decide="${d.id}" data-approve="false">Déconnecter</button>`}</div></article>`;
+function fresh(set, id) {
+  const isNew = !firstRender && !set.has(id);
+  set.add(id);
+  return isNew ? ' fresh' : '';
 }
-function transferCaption(t) {
-  return t.paused ? `En pause · en attente de ${t.sender}` : t.direction === 'download' ? `Vers ${t.sender}` : `Depuis ${t.sender}`;
+
+function applyTheme() {
+  const dark = themeChoice === 'dark' || (themeChoice === 'system' && systemDark);
+  document.documentElement.dataset.theme = dark ? 'dark' : 'light';
 }
-async function updateQr(next) {
-  const url = next.pairUrl || '';
-  if (lastQr === `${url}|${next.expiresAt}`) return;
-  lastQr = `${url}|${next.expiresAt}`;
-  $('#qr').hidden = !url; $('#qr-empty').hidden = !!url;
-  $('[data-action="copy-link"]').disabled = !url;
-  if (url) { try { $('#qr').src = svgData(await call('qr')); } catch { $('#qr').hidden = true; $('#qr-empty').hidden = false; } }
+async function setThemeChoice(choice) {
+  themeChoice = choice;
+  try { localStorage.setItem('brise-theme', choice); } catch {}
+  try {
+    await appWindow?.setTheme(choice === 'system' ? null : choice);
+    if (choice === 'system') systemDark = (await appWindow.theme()) === 'dark';
+  } catch {}
+  applyTheme();
 }
+async function initTheme() {
+  try { themeChoice = localStorage.getItem('brise-theme') || 'system'; } catch {}
+  try {
+    if (themeChoice !== 'system') await appWindow?.setTheme(themeChoice);
+    else systemDark = (await appWindow.theme()) === 'dark';
+  } catch {}
+  applyTheme();
+  try { await appWindow?.onThemeChanged(({ payload }) => { if (themeChoice === 'system') { systemDark = payload === 'dark'; applyTheme(); } }); } catch {}
+}
+
+const approvedDevices = () => state.devices.filter(d => d.status === 'approved');
+const modeLabel = mode => t(`mode.${mode}`);
+function deviceState(d) { return d.status === 'pending' ? t('device.pending') : d.online ? t('device.online') : t('device.asleep'); }
+function avatar(d) { return `<span class="avatar">${icon('phone')}<span class="dot ${d.status === 'pending' ? 'warn live' : d.online ? '' : 'idle'}"></span></span>`; }
+function media(file) {
+  if (file.path && fileKind(file.name) === 'image' && !/\.(heic|heif)$/i.test(file.name)) return `<img class="thumb" loading="lazy" decoding="async" src="${escape(assetUrl(file.path))}" data-name="${escape(file.name)}" alt="">`;
+  return kindTile(file.name);
+}
+function digits(code) {
+  const chars = String(code || '').split('');
+  return chars.slice(0, 3).map(c => `<span>${escape(c)}</span>`).join('') + '<span class="gap"></span>' + chars.slice(3).map(c => `<span>${escape(c)}</span>`).join('');
+}
+
+function connectStatus() {
+  const c = state.connection;
+  if (state.serverError) return { status: 'error', message: errorText(state.serverError), server: true };
+  return { status: c.status, message: c.message ? errorText(c.message) : '' };
+}
+function qrBlock(size = '') {
+  const c = state.connection, s = connectStatus();
+  if (s.status === 'starting') return `<div class="qr-placeholder ${size}"><span class="spinner"></span><span>${escape(t(`connect.starting.${c.mode}`))}</span></div>`;
+  if (s.status === 'error') return `<div class="qr-placeholder error ${size}">${icon('alert')}<strong>${escape(s.server ? t('connect.server_error') : t('connect.unavailable'))}</strong><span>${escape(s.message)}</span>${s.server ? '' : `<button class="button secondary small" data-action="modes">${escape(t('action.change_mode'))}</button>`}</div>`;
+  if (!state.pairUrl) return `<div class="qr-placeholder ${size}">${icon('alert')}<span>${escape(t('connect.no_address'))}</span><button class="button secondary small" data-action="settings">${escape(t('action.settings'))}</button></div>`;
+  if (c.mode === 'hotspot' && c.hotspot && size !== 'mini') {
+    return `<div class="qr-pair"><div class="qr-step"><span class="qr-step-label"><b>1</b>${escape(t('connect.hotspot.join'))}</span><div class="qr-card"><img data-qr="wifi" alt="${escape(t('connect.wifi_qr_alt'))}"></div><dl class="wifi-credentials"><dt>${escape(t('connect.hotspot.network'))}</dt><dd>${escape(c.hotspot.ssid)}</dd><dt>${escape(t('connect.hotspot.password'))}</dt><dd>${escape(c.hotspot.password)}</dd></dl></div><div class="qr-step"><span class="qr-step-label"><b>2</b>${escape(t('connect.hotspot.open'))}</span><div class="qr-card"><img data-qr="pair" alt="${escape(t('connect.qr_alt'))}"></div></div></div>`;
+  }
+  return `<div class="qr-card"><img data-qr="pair" alt="${escape(t('connect.qr_alt'))}"></div>`;
+}
+function heroConnect(dialog = false) {
+  const c = state.connection, ready = connectStatus().status === 'ready' && state.pairUrl;
+  const twoCodes = c.mode === 'hotspot' && c.hotspot && ready;
+  const steps = twoCodes ? [t('connect.hotspot.step1'), t('connect.hotspot.step2'), t('connect.step3')] : [t('connect.step1'), t('connect.step2'), t('connect.step3')];
+  const meta = ready ? `<div class="qr-meta"><span>${escape(t(`connect.need.${c.mode}`))}</span><button class="icon-button small" data-action="rotate" title="${escape(t('action.new_code'))}" aria-label="${escape(t('action.new_code'))}">${icon('refresh')}</button></div>` : '';
+  return `${dialog ? '' : breezeLines()}<div class="connect-inner${twoCodes ? ' two-qr' : ''}"><div class="connect-copy"><h1 id="connect-title">${escape(t('connect.title'))}</h1><p class="lead">${escape(t('connect.lead'))}</p><ol class="steps">${steps.map(step => `<li>${escape(step)}</li>`).join('')}</ol><div class="connect-actions">${ready ? `<button class="button primary" data-action="copy-link">${icon('link')}${escape(t('action.copy_link'))}</button>` : ''}<button class="link-button" data-action="modes">${icon(c.mode)}${escape(t('action.change_mode'))}</button></div></div><div class="qr-zone">${qrBlock()}${meta}</div></div>`;
+}
+function miniConnect() {
+  const ready = connectStatus().status === 'ready' && state.pairUrl;
+  return `<div class="mini-connect">${ready ? `<div class="qr-card"><img data-qr="pair" alt="${escape(t('connect.qr_alt'))}"></div>` : qrBlock('mini')}<strong>${escape(t('devices.connect_another'))}</strong><p>${escape(t(`connect.need.${state.connection.mode}`))}</p>${ready ? `<button class="button secondary small" data-action="copy-link">${icon('link')}${escape(t('action.copy_link'))}</button>` : ''}</div>`;
+}
+async function loadQrs() {
+  const pairKey = state.pairUrl || '';
+  if (pairKey && qrCache.pair.key !== pairKey) {
+    try { qrCache.pair = { key: pairKey, src: svgData(await call('qr')) }; } catch { qrCache.pair = { key: '', src: '' }; }
+  }
+  const hotspot = state.connection.hotspot;
+  const wifiKey = hotspot && state.connection.status === 'ready' ? `${hotspot.ssid}|${hotspot.password}` : '';
+  if (wifiKey && qrCache.wifi.key !== wifiKey) {
+    try { qrCache.wifi = { key: wifiKey, src: svgData(await call('wifi_qr')) }; } catch { qrCache.wifi = { key: '', src: '' }; }
+  }
+  $$('img[data-qr="pair"]').forEach(img => { if (qrCache.pair.src && img.src !== qrCache.pair.src) img.src = qrCache.pair.src; });
+  $$('img[data-qr="wifi"]').forEach(img => { if (qrCache.wifi.src && img.src !== qrCache.wifi.src) img.src = qrCache.wifi.src; });
+}
+function renderConnect() {
+  const key = JSON.stringify([lang, state.connection.mode, state.connection.status, state.connection.message, state.connection.hotspot, state.pairUrl, state.serverError]);
+  patch($('#connect-panel'), key, heroConnect());
+  patch($('#rail-connect'), key, miniConnect());
+  if (dialogKind === 'connect' && keys['dialog-connect'] !== key) { keys['dialog-connect'] = key; $('#dialog-connect').innerHTML = heroConnect(true); }
+  loadQrs();
+}
+
+function renderTopbar(approved) {
+  const c = state.connection, s = connectStatus();
+  $('#mode-chip .mode-label').textContent = modeLabel(c.mode);
+  $('#mode-chip .dot').className = `dot ${s.status === 'starting' ? 'warn live' : s.status === 'error' ? 'error' : ''}`;
+  $('#mode-chip').title = s.message || t(`mode.${c.mode}.desc`);
+  const visible = state.devices.filter(d => d.status !== 'revoked');
+  const chips = visible.slice(0, 3).map(d => `<button class="device-chip${fresh(seen.devices, d.id)}" data-action="devices" title="${escape(d.name)}">${avatar(d)}<span class="who"><strong>${escape(d.name)}</strong><span>${escape(deviceState(d))}</span></span></button>`).join('');
+  const more = visible.length > 3 ? `<button class="chip more-chip" data-action="devices">+${visible.length - 3}</button>` : '';
+  patch($('#device-chips'), JSON.stringify([lang, visible.map(d => [d.id, d.name, d.status, d.online])]), chips + more);
+  $('#add-device').hidden = !approved.length;
+}
+
+function sharedRow(file, downloads) {
+  const dl = downloads.find(d => d.fileId === file.id);
+  const percent = dl ? percentOf(dl.bytes, dl.size) : 0;
+  const status = dl
+    ? `<span class="status busy" data-percent-for="${dl.id}">${icon('download')}${percent}\u00a0%</span>`
+    : file.downloads ? `<span class="status ok">${icon('check')}${escape(file.downloads > 1 ? t('file.downloaded_n', { count: file.downloads }) : t('file.downloaded'))}</span>` : `<span class="status">${escape(t('file.available'))}</span>`;
+  const meta = `<span>${formatSize(file.size)}</span>${dl ? `<span class="sep">·</span><span>${escape(t('file.downloading', { name: dl.sender }))}</span>` : ''}`;
+  return `<div class="row shared${fresh(seen.shared, file.id)}" data-file="${file.id}">${media(file)}<div class="row-main"><span class="row-name" title="${escape(file.name)}">${escape(file.name)}</span><span class="row-meta">${meta}</span>${dl ? `<span data-progress="${dl.id}">${progressBar(percent, file.name)}</span>` : ''}</div>${status}<div class="row-actions"><button class="icon-button small" data-reveal="${file.id}" title="${escape(t('action.reveal'))}" aria-label="${escape(t('action.reveal'))}">${icon('folder')}</button><button class="icon-button small danger" data-remove="${file.id}" title="${escape(t('file.remove'))}" aria-label="${escape(`${t('file.remove')} : ${file.name}`)}">${icon('x')}</button></div></div>`;
+}
+function renderSend(approved) {
+  $('#send-title').textContent = approved.length > 1 ? t('send.title_many') : t('send.title');
+  const shared = state.files.filter(f => f.direction === 'outgoing');
+  const downloads = state.transfers.filter(t => t.direction === 'download');
+  $('#dropzone').classList.toggle('big', !shared.length);
+  const key = JSON.stringify([lang, shared.map(f => [f.id, f.downloads, f.size]), downloads.map(d => [d.id, d.fileId, d.sender])]);
+  const html = shared.length ? shared.map(f => sharedRow(f, downloads)).join('') : `<p class="dropzone-note">${escape(approved.length ? t('send.empty') : t('send.waiting_device'))}</p>`;
+  if (!patch($('#shared-list'), key, html)) updateProgress(downloads);
+}
+
+function incomingCard(transfer) {
+  const percent = percentOf(transfer.bytes, transfer.size);
+  const caption = transfer.paused ? t('inbox.paused', { name: transfer.sender }) : t('inbox.receiving', { name: transfer.sender });
+  return `<div class="incoming${transfer.paused ? ' paused' : ''}" data-transfer="${transfer.id}">${kindTile(transfer.name)}<div class="row-main"><span class="row-name">${escape(transfer.name)}</span><span class="row-meta"><span>${escape(caption)}</span><span class="sep">·</span><span data-bytes>${formatSize(transfer.bytes)} / ${formatSize(transfer.size)}</span></span><span data-progress="${transfer.id}">${progressBar(percent, transfer.name).replace('class="progress"', `class="progress${transfer.paused ? ' paused' : ''}"`)}</span></div><span class="status ${transfer.paused ? 'warn' : 'busy'}" data-percent>${transfer.paused ? icon('pause') : ''}${percent}\u00a0%</span></div>`;
+}
+function receivedRow(file) {
+  return `<div class="row clickable${fresh(seen.received, file.id)}" data-open-row="${file.id}">${media(file)}<div class="row-main"><span class="row-name" title="${escape(file.name)}">${escape(file.name)}</span><span class="row-meta"><span>${formatSize(file.size)}</span><span class="sep">·</span><span>${escape(t('inbox.from', { name: file.sender }))}</span><span class="sep">·</span><span>${formatTime(file.createdAt)}</span></span></div><div class="row-actions"><button class="icon-button small" data-open="${file.id}" title="${escape(t('action.open'))}" aria-label="${escape(`${t('action.open')} : ${file.name}`)}">${icon('open')}</button><button class="icon-button small" data-reveal="${file.id}" title="${escape(t('action.reveal'))}" aria-label="${escape(t('action.reveal'))}">${icon('folder')}</button></div></div>`;
+}
+function renderInbox() {
+  const received = state.files.filter(f => f.direction === 'incoming');
+  const incoming = state.transfers.filter(t => t.direction === 'incoming');
+  $('#inbox-count').hidden = !received.length;
+  $('#inbox-count').textContent = received.length;
+  const key = JSON.stringify([lang, received.map(f => f.id), incoming.map(t => [t.id, t.paused, t.sender])]);
+  let html = incoming.map(incomingCard).join('');
+  let day = '';
+  for (const file of received) {
+    const label = dayLabel(file.createdAt);
+    if (label !== day) { day = label; html += `<div class="group-label">${escape(label)}</div>`; }
+    html += receivedRow(file);
+  }
+  if (!html) html = emptyState('download', t('inbox.empty.title'), t('inbox.empty.text'));
+  if (!patch($('#inbox-list'), key, html)) updateProgress(incoming);
+}
+function updateProgress(transfers) {
+  for (const transfer of transfers) {
+    const percent = percentOf(transfer.bytes, transfer.size);
+    $$(`[data-progress="${transfer.id}"] progress`).forEach(p => { p.value = percent; });
+    const card = $(`[data-transfer="${transfer.id}"]`);
+    if (card) {
+      card.querySelector('[data-bytes]').textContent = `${formatSize(transfer.bytes)} / ${formatSize(transfer.size)}`;
+      const badge = card.querySelector('[data-percent]');
+      badge.innerHTML = `${transfer.paused ? icon('pause') : ''}${percent}\u00a0%`;
+    }
+    const pill = $(`[data-percent-for="${transfer.id}"]`);
+    if (pill) pill.innerHTML = `${icon('download')}${percent}\u00a0%`;
+  }
+}
+
+function renderRail() {
+  const visible = state.devices.filter(d => d.status !== 'revoked');
+  const html = visible.map(d => `<div class="device-row">${avatar(d)}<span class="who"><strong>${escape(d.name)}</strong><span>${escape(deviceState(d))}</span></span>${d.status === 'pending' ? `<button class="button primary small" data-decide="${d.id}" data-approve="true">${escape(t('action.accept'))}</button>` : `<button class="icon-button small danger" data-decide="${d.id}" data-approve="false" title="${escape(t('action.disconnect'))}" aria-label="${escape(`${t('action.disconnect')} : ${d.name}`)}">${icon('x')}</button>`}</div>`).join('');
+  patch($('#rail-devices'), JSON.stringify([lang, visible.map(d => [d.id, d.name, d.status, d.online])]), html);
+}
+
+function renderPairRequest() {
+  const pending = state.devices.find(d => d.status === 'pending');
+  const dialog = $('#pair-dialog');
+  if (!pending) { if (dialog.open) dialog.close(); lastPairId = null; return; }
+  if (pending.id === lastPairId) return;
+  lastPairId = pending.id;
+  dialog.dataset.id = pending.id;
+  $('#pair-title').textContent = t('pair.title', { name: pending.name });
+  $('#pair-code').innerHTML = digits(pending.code);
+  if (!dialog.open) dialog.showModal();
+}
+function announceDevices(approved) {
+  const now = new Map(approved.map(d => [d.id, d.name]));
+  if (approvedBefore) {
+    for (const [id, name] of now) if (!approvedBefore.has(id)) toast(t('toast.device_connected', { name }));
+    for (const [id, name] of approvedBefore) if (!now.has(id)) toast(t('toast.device_disconnected', { name }));
+  }
+  approvedBefore = now;
+}
+
 function updateState(next) {
+  const langChanged = setLang(next.lang);
   state = next;
-  $('#boot').hidden = true; $('#shell').hidden = false;
-  $('#network-status span').textContent = modeLabel(next.connectionMode || 'local');
-  renderConnection(next.connection, next.serverError);
-  $('#computer-name').textContent = next.network.hostname;
-  $('#receive-path').textContent = next.receiveDir;
-  $('#device-count').textContent = next.devices.filter(d => d.status === 'approved').length;
-  updateQr(next);
-  const key = JSON.stringify(next.files);
-  if (lastFiles !== key) {
-    const shared = next.files.filter(f => f.direction === 'outgoing');
-    const received = next.files.filter(f => f.direction === 'incoming');
-    $('#shared-count').textContent = shared.length;
-    $('#history-count').textContent = received.length;
-    $('#shared-list').innerHTML = shared.length ? shared.map(f => fileRow(f, 'shared')).join('') : empty('Aucun fichier partagé', 'Glissez des fichiers dans la fenêtre ou cliquez sur Parcourir.');
-    $('#history-list').innerHTML = received.length ? received.map(f => fileRow(f, 'history')).join('') : empty('Aucun fichier reçu', 'Les fichiers envoyés depuis le téléphone apparaîtront ici.', 'clock');
-    lastFiles = key;
-  }
-  const devicesKey = JSON.stringify(next.devices.map(d => ({ id:d.id, name:d.name, status:d.status, code:d.code, online:d.online })));
-  if (devicesKey !== lastDevices) {
-    lastDevices = devicesKey;
-    $('#pending-requests').innerHTML = next.devices.filter(d => d.status === 'pending').map(deviceCard).join('');
-    $('#devices-list').innerHTML = next.devices.length ? next.devices.map(deviceCard).join('') : empty('Aucun appareil autorisé', 'Scannez le QR code dans Transferts pour connecter votre téléphone.', 'devices');
-    const approved = next.devices.filter(d => d.status === 'approved');
-    $('#connected-label').textContent = approved.length ? `${approved.length} appareil${approved.length > 1 ? 's' : ''} associé${approved.length > 1 ? 's' : ''}.` : 'Aucun appareil connecté';
-    $('#connected-detail').textContent = approved.length ? approved.map(d => d.name).join(' · ') : 'Scannez le QR code pour vous connecter.';
-  }
-  const transfersKey = JSON.stringify(next.transfers);
-  if (transfersKey !== lastTransfers) {
-    lastTransfers = transfersKey;
-    $('#active-section').hidden = !next.transfers.length;
-    $('#active-list').innerHTML = next.transfers.map(t => transferRow(t, transferCaption(t))).join('');
-  }
-  countdown();
-}
-function countdown() {
-  if (!state) return;
-  if (!state.pairUrl) { $('#expiry').textContent = '—'; return; }
-  const sec = Math.max(0, Math.floor((state.expiresAt - Date.now()) / 1000));
-  $('#expiry').textContent = `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  if (langChanged) for (const key of Object.keys(keys)) delete keys[key];
+  $('#boot').hidden = true; $('#app').hidden = false;
+  const approved = approvedDevices();
+  $('#app').dataset.view = approved.length ? 'share' : 'connect';
+  renderTopbar(approved);
+  renderConnect();
+  renderSend(approved);
+  renderInbox();
+  renderRail();
+  renderPairRequest();
+  announceDevices(approved);
+  const names = approved.map(d => d.name).join(', ');
+  $('#drop-text').textContent = names ? t('drop.to', { name: names }) : t('drop.later');
+  if (dialogKind === 'devices') devicesDialog(true);
+  firstRender = false;
 }
 async function refresh() {
   if (refreshing) { again = true; return; }
   refreshing = true;
   try { updateState(await call('get_state')); }
-  catch (error) { toast(error.message, true); }
+  catch (error) { toast(error.message, 'error'); }
   finally { refreshing = false; if (again) { again = false; refresh(); } }
 }
-function switchView(name) {
-  $$('.view').forEach(e => e.hidden = e.id !== `view-${name}`);
-  $$('.nav-item[data-view]').forEach(e => { e.classList.toggle('selected', e.dataset.view === name); if (e.dataset.view === name) e.setAttribute('aria-current', 'page'); else e.removeAttribute('aria-current'); });
-  const titles = {
-    transfer: ['Transferts', 'Partagez des fichiers avec les appareils connectés.'],
-    devices: ['Appareils', 'Autorisez ou déconnectez les appareils.'],
-    history: ['Historique', 'Fichiers reçus sur ce PC.'],
-  };
-  $('#page-title').textContent = titles[name][0]; $('#page-subtitle').textContent = titles[name][1];
+
+function show(kind, title, html, options) {
+  dialogKind = kind;
+  openDialog(title, html, options);
 }
-function renderConnection(c, serverError) {
-  $('#connection-mode').value = c.mode;
-  $('#connection-mode').disabled = c.status === 'starting' || !!serverError;
-  const descriptions = { local: 'PC et téléphone sur le même réseau.', internet: 'Connexion HTTPS via Cloudflare. Le téléphone peut utiliser la 4G/5G.', hotspot: 'Connexion au Wi-Fi du PC, sans box ni Internet.' };
-  $('#connection-status').textContent = c.status === 'starting' ? 'Changement de connexion en cours…' : c.message || descriptions[c.mode];
-  $('#connection-status').classList.toggle('error', c.status === 'error');
-  $('#mode-retry').hidden = c.status !== 'error';
-  $('#hotspot-details').hidden = !(c.mode === 'hotspot' && c.status === 'ready' && c.hotspot);
-  $('.connect-panel .panel-heading h2').textContent = c.mode === 'hotspot' && c.hotspot ? '2. Ouvrir Brise' : 'Connecter un téléphone';
-  if (c.hotspot && c.status === 'ready') {
-    $('#hotspot-ssid').textContent = c.hotspot.ssid;
-    $('#hotspot-password').textContent = c.hotspot.password;
-    if (lastHotspot !== c.hotspot.ssid) { lastHotspot = c.hotspot.ssid; call('wifi_qr').then(svg => { $('#wifi-qr').src = svgData(svg); }).catch(() => {}); }
+function connectDialog() {
+  show('connect', t('connect.dialog_title'), '<div id="dialog-connect" class="panel connect in-dialog"></div>', { wide: true });
+  keys['dialog-connect'] = ''; renderConnect();
+}
+function devicesDialog(rerender = false) {
+  const visible = state.devices.filter(d => d.status !== 'revoked');
+  const html = `<div class="section"><div class="device-list">${visible.length ? visible.map(d => `<div class="device-row">${avatar(d)}<span class="who"><strong>${escape(d.name)}</strong><span>${escape(deviceState(d))}</span></span>${d.status === 'pending' ? `<button class="button secondary small" data-decide="${d.id}" data-approve="false">${escape(t('action.decline'))}</button><button class="button primary small" data-decide="${d.id}" data-approve="true">${escape(t('action.accept'))}</button>` : `<button class="button secondary small" data-decide="${d.id}" data-approve="false">${escape(t('action.disconnect'))}</button>`}</div>`).join('') : `<p>${escape(t('devices.empty'))}</p>`}</div></div><div class="modal-actions"><button class="button primary" data-action="connect-dialog">${icon('plus')}${escape(t('devices.connect_another'))}</button></div>`;
+  if (rerender) { if ($('#dialog').open) $('#dialog-body').innerHTML = html; return; }
+  show('devices', t('devices.title'), html);
+}
+function modeDetails(mode) {
+  const c = state.connection;
+  const capability = mode === 'local' ? { available: true } : c.capabilities[mode];
+  if (mode === c.mode && c.status === 'ready') return '';
+  if (!capability?.available) {
+    return `<div class="mode-details"><div class="note error">${icon('alert')}<span>${escape(errorText(capability?.reason || 'unexpected'))}</span></div>${capability?.install ? `<p>${escape(t('mode.install'))}</p><div class="command">${icon('terminal')}<code>${escape(capability.install)}</code></div>` : ''}${capability?.installUrl ? `<a class="link-button" href="${escape(capability.installUrl)}" target="_blank" rel="noreferrer">${icon('open')}${escape(t('mode.install_link'))}</a>` : ''}<div class="modal-actions"><button class="button secondary" data-action="probe" data-mode="${mode}">${icon('refresh')}${escape(t('action.check_again'))}</button></div></div>`;
   }
-  const unavailable = serverError || (c.status === 'starting' ? 'Connexion en cours…' : c.status === 'error' ? 'Connexion indisponible.' : 'Aucune adresse réseau sélectionnée.');
-  $('#qr-empty').classList.toggle('error', !!serverError);
-  $('#qr-empty p').textContent = unavailable;
-  const setup = $('#qr-empty button');
-  setup.hidden = c.status === 'starting' || !!serverError;
-  setup.dataset.action = c.mode === 'local' && c.status !== 'error' ? 'settings' : 'mode-setup';
-  setup.textContent = c.mode === 'local' && c.status !== 'error' ? 'Configurer le réseau' : 'Configurer la connexion';
-  $('[data-action="rotate"]').disabled = c.status !== 'ready' || !!serverError;
+  const notes = { internet: `<div class="note">${icon('lock')}<span>${escape(t('mode.internet.privacy'))}</span></div>`, hotspot: `<div class="note warn">${icon('alert')}<span>${escape(t('mode.hotspot.warning'))}</span></div>`, local: '' };
+  const hotspotForm = mode === 'hotspot' ? `<label class="field"><span class="field-label">${escape(t('mode.hotspot.card'))}</span><span class="select-wrap"><select id="hotspot-interface" class="input">${capability.interfaces.map(i => `<option value="${escape(i)}">${escape(i)}</option>`).join('')}</select>${icon('chevron')}</span></label><label class="check"><input type="checkbox" id="confirm-wifi"><span>${escape(t('mode.hotspot.confirm'))}</span></label>` : '';
+  return `<div class="mode-details">${notes[mode]}${hotspotForm}<p class="hint">${icon('info')}<span>${escape(t('mode.reconnect_note'))}</span></p><div class="modal-actions"><button class="button primary" data-action="activate" data-mode="${mode}">${escape(t('mode.activate'))}</button></div></div>`;
 }
-function connectionDialog(mode) {
-  const c = state?.connection; if (!c) return;
-  if (state.transfers.some(t => !t.paused)) return toast('Attendez la fin des transferts avant de changer de mode.', true);
-  const capability = c.capabilities[mode];
-  let content = '';
-  if (mode === 'internet') content = '<p>Le PC et le téléphone peuvent utiliser des réseaux différents. Le PC doit rester connecté à Internet.</p><p>Brise ouvre un lien HTTPS temporaire via Cloudflare. Les fichiers transitent par ce service ; le transport n’est pas chiffré de bout en bout. L’adresse est fermée à l’arrêt du mode Internet.</p><p class="settings-caption">Le service de tunnel temporaire ne garantit pas sa disponibilité.</p>';
-  if (mode === 'hotspot') content = '<p>Le PC crée un réseau Wi-Fi pour le téléphone. Une connexion Internet n’est pas nécessaire.</p><p>Sur la carte sélectionnée, le point d’accès remplace la connexion Wi-Fi actuelle. Brise tentera de rétablir celle-ci à l’arrêt du point d’accès.</p>';
-  if (mode === 'local') content = '<p>Le PC et le téléphone doivent être sur le même réseau local. Le tunnel ou le point d’accès actif sera arrêté.</p>';
-  if (capability && !capability.available) {
-    content += `<div class="dialog-section"><p>${escape(capability.reason)}</p>${capability.install ? `<p>Installez cet outil dans un terminal :</p><p><code>${escape(capability.install)}</code></p>` : ''}<button class="button secondary" data-action="probe-modes" data-mode="${mode}">Vérifier à nouveau</button></div>`;
-  } else {
-    content += `<form id="connection-form" data-mode="${mode}">${mode === 'hotspot' ? `<label for="hotspot-interface">Carte Wi-Fi</label><select id="hotspot-interface">${capability.interfaces.map(i => `<option value="${escape(i)}">${escape(i)}</option>`).join('')}</select><label class="check-label"><input type="checkbox" id="confirm-wifi" required><span>J’accepte de remplacer la connexion Wi-Fi de cette carte pendant le partage.</span></label>` : ''}<p class="settings-caption">Les appareils associés devront se reconnecter avec le nouveau QR code.</p><div class="dialog-actions"><button class="button secondary" type="button" data-action="close-dialog">Annuler</button><button class="button primary" type="submit">Activer ${modeLabel(mode).toLowerCase()}</button></div></form>`;
-  }
-  dialog(modeLabel(mode), content);
+function modesDialog(selected) {
+  const c = state.connection;
+  modeDraft = selected || c.mode;
+  const badge = mode => mode !== c.mode ? '' : c.status === 'starting' ? `<span class="status busy">${escape(t('mode.starting'))}</span>` : c.status === 'error' ? `<span class="status warn">${escape(t('mode.failed'))}</span>` : `<span class="status ok">${escape(t('mode.active'))}</span>`;
+  const cards = ['local', 'internet', 'hotspot'].map(mode => `<button class="mode-card" data-mode-card="${mode}" aria-pressed="${mode === modeDraft}"><span class="mode-icon">${icon(mode)}</span><span class="mode-text"><strong>${escape(modeLabel(mode))}${badge(mode)}</strong><span>${escape(t(`mode.${mode}.desc`))}</span></span></button>`).join('');
+  const failure = c.status === 'error' && c.message ? `<div class="note error">${icon('alert')}<span>${escape(errorText(c.message))}</span></div>` : '';
+  show('modes', t('mode.title'), `${failure}<div class="mode-cards">${cards}</div>${modeDetails(modeDraft)}`);
 }
-function settings() {
-  const n = state.network;
-  dialog('Réglages', `<h3>Adresse du mode local</h3><p>Brise suit automatiquement l’adresse de ce PC. Choisissez-en une autre seulement si le téléphone n’arrive pas à se connecter (VPN, plusieurs cartes réseau).</p><form id="network-form">${n.interfaces.length > 1 ? `<label for="network-select">Interfaces disponibles</label><select id="network-select">${n.interfaces.map(i => `<option value="${escape(i.address)}" ${i.address === n.address ? 'selected' : ''}>${escape(i.name)} · ${escape(i.address)}</option>`).join('')}</select>` : ''}<label for="network-address">Adresse IPv4 du PC</label><div class="inline-form"><input id="network-address" name="address" inputmode="decimal" value="${escape(n.address || '')}" placeholder="192.168.1.42" required><button class="button primary" type="submit">Appliquer</button></div></form><p class="settings-caption">Port ${n.port}/TCP. S’il ne passe pas, autorisez-le dans votre pare-feu.</p><div class="dialog-section"><h3>Dossier de réception</h3><p>Vos fichiers reçus sont conservés dans :</p><p><code>${escape(state.receiveDir)}</code></p><button class="button secondary" data-action="folder">${icon('folder')}Ouvrir le dossier</button></div><div class="dialog-section"><h3>Terminer le partage</h3><p>Fermer la fenêtre laisse Brise actif dans la barre système. Quitter déconnecte les téléphones et arrête le partage. Vos fichiers reçus sont conservés.</p><button class="button danger" data-action="quit-confirm">Quitter Brise</button></div>`);
+function settingsDialog() {
+  const n = state.network, local = state.connection.mode === 'local';
+  const themeButtons = [['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([choice, glyph]) => `<button data-theme-choice="${choice}" aria-pressed="${themeChoice === choice}">${icon(glyph)}${escape(t(`theme.${choice}`))}</button>`).join('');
+  const network = local
+    ? `<form id="network-form" class="field">${n.interfaces.length > 1 ? `<span class="select-wrap"><select id="network-select" class="input" aria-label="${escape(t('settings.interface'))}">${n.interfaces.map(i => `<option value="${escape(i.address)}" ${i.address === n.address ? 'selected' : ''}>${escape(i.name)} · ${escape(i.address)}</option>`).join('')}</select>${icon('chevron')}</span>` : ''}<span class="inline"><input id="network-address" class="input" inputmode="decimal" aria-label="${escape(t('settings.address'))}" value="${escape(n.address || '')}" placeholder="192.168.1.42" required><button class="button secondary" type="submit">${escape(t('action.apply'))}</button></span></form>`
+    : `<div class="note">${icon('info')}<span>${escape(t('settings.local_only'))}</span></div>`;
+  show('settings', t('settings.title'), `
+    <div class="section"><span class="section-title">${icon('palette')}${escape(t('settings.appearance'))}</span><div class="segmented" role="group" aria-label="${escape(t('settings.appearance'))}">${themeButtons}</div></div>
+    <div class="section"><span class="section-title">${icon('folder')}${escape(t('settings.receive'))}</span><p>${escape(t('settings.receive_text'))}</p><div class="path">${escape(state.receiveDir)}</div><div><button class="button secondary small" data-action="folder">${icon('folder')}${escape(t('inbox.open_folder'))}</button></div></div>
+    <div class="section"><span class="section-title">${icon('local')}${escape(t('settings.network'))}</span><p>${escape(t('settings.network_text'))}</p>${network}<p class="hint">${icon('info')}<span>${escape(t('settings.port_note', { port: n.port }))}</span></p></div>
+    <div class="section"><div class="about"><img src="icon.svg" alt=""><div><strong>${escape(t('settings.version', { version: state.version }))}</strong><p>${escape(t('settings.about_text'))}</p></div></div></div>
+    <div class="section"><span class="section-title">${icon('power')}${escape(t('settings.quit'))}</span><p>${escape(t('settings.quit_text'))}</p><div><button class="button danger" data-action="quit-confirm">${icon('power')}${escape(t('settings.quit_button'))}</button></div></div>`);
 }
-function help() {
-  dialog('Aide', `<h3>Choisir une connexion</h3><p><strong>Réseau local :</strong> le PC et le téléphone utilisent la même box ou le même réseau Wi-Fi. Internet n’est pas nécessaire.</p><p><strong>Internet :</strong> le téléphone peut utiliser la 4G/5G ou un autre Wi-Fi. Les deux appareils doivent avoir Internet. Le lien HTTPS temporaire passe par Cloudflare et nécessite cloudflared sur le PC.</p><p><strong>Point d’accès Wi-Fi :</strong> le PC crée un réseau Wi-Fi. Scannez le premier QR code pour le rejoindre, puis le second pour ouvrir Brise. La carte Wi-Fi doit prendre en charge ce mode.</p><h3>Autoriser le téléphone</h3><p>Scannez le QR code avec l’appareil photo du téléphone, donnez-lui un nom, comparez les codes puis acceptez la connexion ici. Un changement de mode ferme les anciennes sessions.</p><h3>Transférer des fichiers</h3><p>Glissez des fichiers dans la fenêtre ou cliquez sur « Parcourir… » : ils restent à leur place sur le PC, sans copie. Sur le téléphone, « Recevoir » les télécharge et « Envoyer au PC » fait l’inverse. Les fichiers reçus arrivent dans le dossier indiqué dans l’Historique.</p><p>Fermer la fenêtre laisse Brise actif dans la barre système ; une notification signale chaque demande de connexion et chaque fichier reçu.</p><div class="dialog-section"><h3>Connexion impossible</h3><p>En mode local, vérifiez l’adresse du PC dans les réglages, le VPN et le pare-feu (port ${state?.network.port || 53318}/TCP). Un réseau invité peut isoler les appareils.</p><p>En mode Internet, vérifiez la connexion du PC et la présence de cloudflared. Les tunnels temporaires n’ont pas de garantie de disponibilité.</p><p>En mode point d’accès, vérifiez NetworkManager, ses permissions et votre carte Wi-Fi. Le téléphone peut indiquer « Pas d’Internet » : restez connecté à ce Wi-Fi pour le transfert.</p><p class="settings-caption">Les modes locaux utilisent HTTP. Le mode Internet utilise HTTPS via Cloudflare, qui peut accéder au contenu en transit ; il ne fournit pas de chiffrement de bout en bout. Le QR de connexion expire après dix minutes. Les appareils acceptés restent associés jusqu’à leur déconnexion, un changement de mode ou l’arrêt de Brise.</p></div>`);
+function helpDialog() {
+  const card = (glyph, key) => `<div class="help-card"><h3>${icon(glyph)}${escape(t(`help.${key}.title`))}</h3><p>${escape(t(`help.${key}.text`))}</p></div>`;
+  show('help', t('help.title'), `<div class="help-grid">${card('scan', 'connect')}${card('upload', 'transfer')}${card('internet', 'modes')}${card('alert', 'trouble')}${card('lock', 'privacy')}</div>`, { wide: true });
 }
 async function copyLink() {
-  if (!state?.pairUrl) return toast('Aucune adresse réseau disponible.', true);
-  try { await navigator.clipboard.writeText(state.pairUrl); toast('Lien copié.'); }
-  catch { dialog('Lien de connexion', `<p>Copiez ce lien et ouvrez-le sur votre téléphone.</p><input id="copy-value" aria-label="Lien de connexion" readonly value="${escape(state.pairUrl)}">`); $('#copy-value').select(); }
+  if (!state?.pairUrl) return;
+  try { await navigator.clipboard.writeText(state.pairUrl); toast(t('connect.link_copied')); }
+  catch { show('link', t('action.copy_link'), `<p>${escape(t('connect.copy_fallback'))}</p><input id="copy-value" class="input" readonly value="${escape(state.pairUrl)}">`); $('#copy-value').select(); }
 }
-document.addEventListener('click', async event => {
-  const button = event.target.closest('button,[data-view],[data-action]'); if (!button) return;
+async function pickFiles() {
   try {
-    if (button.dataset.view) switchView(button.dataset.view);
-    if (button.dataset.decide) {
-      button.disabled = true; await call('decide', { id:button.dataset.decide, approve:button.dataset.approve === 'true' }); await refresh();
-      toast(button.dataset.approve === 'true' ? 'Appareil connecté. Vous pouvez partager.' : 'Connexion fermée.');
+    const count = await call('pick_files');
+    if (count) toast(count === 1 ? t('toast.shared_one') : t('toast.shared_other', { count }));
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+document.addEventListener('click', async event => {
+  const el = event.target.closest('button, a[data-action]');
+  if (!el || el.closest('[data-close]')) return;
+  try {
+    if (el.dataset.pair) {
+      const dialog = $('#pair-dialog');
+      el.disabled = true;
+      await call('decide', { id: dialog.dataset.id, approve: el.dataset.pair === 'accept' });
+      dialog.close(); await refresh();
+      return;
     }
-    if (button.dataset.remove) { await call('remove_shared', { id:button.dataset.remove }); await refresh(); toast('Fichier retiré du partage.'); }
-    if (button.dataset.reveal) await call('reveal_file', { id:button.dataset.reveal });
-    switch (button.dataset.action) {
-      case 'help': help(); break;
-      case 'settings': settings(); break;
-      case 'mode-setup': connectionDialog(state?.connection?.mode || 'local'); break;
-      case 'probe-modes': button.disabled = true; await call('probe_modes'); await refresh(); connectionDialog(button.dataset.mode); break;
+    if (el.dataset.decide) { el.disabled = true; await call('decide', { id: el.dataset.decide, approve: el.dataset.approve === 'true' }); await refresh(); return; }
+    if (el.dataset.remove) { await call('remove_shared', { id: el.dataset.remove }); seen.shared.delete(el.dataset.remove); toast(t('toast.removed')); await refresh(); return; }
+    if (el.dataset.open) { await call('open_file', { id: el.dataset.open }); return; }
+    if (el.dataset.reveal) { await call('reveal_file', { id: el.dataset.reveal }); return; }
+    if (el.dataset.themeChoice) { await setThemeChoice(el.dataset.themeChoice); $$('[data-theme-choice]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeChoice === themeChoice))); return; }
+    if (el.dataset.modeCard) { modesDialog(el.dataset.modeCard); return; }
+    if (el.id === 'dropzone') { await pickFiles(); return; }
+    switch (el.dataset.action) {
+      case 'modes': modesDialog(); break;
+      case 'settings': settingsDialog(); break;
+      case 'help': helpDialog(); break;
+      case 'devices': devicesDialog(); break;
+      case 'connect-dialog': connectDialog(); break;
       case 'copy-link': await copyLink(); break;
-      case 'rotate': button.disabled = true; await call('rotate'); await refresh(); toast('QR code renouvelé.'); break;
+      case 'rotate': el.disabled = true; await call('rotate'); await refresh(); break;
       case 'folder': await call('open_folder'); break;
-      case 'quit-confirm': dialog('Quitter Brise ?', `<p>Quitter Brise interrompt les transferts en cours et déconnecte vos appareils. Les fichiers déjà reçus restent sur votre PC.</p><div class="dialog-actions"><button class="button secondary" data-action="close-dialog">Continuer le partage</button><button class="button danger" data-action="quit">Quitter Brise</button></div>`); break;
+      case 'probe': el.disabled = true; await call('probe_modes'); await refresh(); modesDialog(el.dataset.mode); break;
+      case 'activate': {
+        const mode = el.dataset.mode;
+        el.disabled = true;
+        await call('select_mode', { mode, interface: $('#hotspot-interface')?.value ?? null, confirmWifiChange: $('#confirm-wifi')?.checked === true });
+        closeDialog(); await refresh();
+        break;
+      }
+      case 'quit-confirm': show('quit', t('quit.title'), `<p>${escape(t('quit.text'))}</p><div class="modal-actions"><button class="button secondary" data-close>${escape(t('quit.keep'))}</button><button class="button danger" data-action="quit">${icon('power')}${escape(t('settings.quit_button'))}</button></div>`); break;
       case 'quit': await call('quit'); break;
     }
-  } catch (error) { toast(error.message, true); }
-  finally { button.disabled = false; }
+  } catch (error) { toast(error.message, 'error'); }
+  finally { el.disabled = false; }
+});
+document.addEventListener('dblclick', event => {
+  const row = event.target.closest('[data-open-row]');
+  if (row && !event.target.closest('button')) call('open_file', { id: row.dataset.openRow }).catch(error => toast(error.message, 'error'));
 });
 document.addEventListener('submit', async event => {
-  if (!['network-form','connection-form'].includes(event.target.id)) return;
-  event.preventDefault(); const submit = event.target.querySelector('button[type=submit]'); submit.disabled = true;
-  try {
-    if (event.target.id === 'connection-form') {
-      await call('select_mode', { mode: event.target.dataset.mode, interface: $('#hotspot-interface')?.value ?? null, confirmWifiChange: $('#confirm-wifi')?.checked === true });
-      $('#dialog').close(); await refresh();
-    } else {
-      await call('set_address', { address:$('#network-address').value.trim() }); await refresh(); $('#dialog').close(); toast('Adresse mise à jour. Scannez le nouveau QR code.');
-    }
-  } catch (error) { toast(error.message, true); }
-  finally { submit.disabled = false; }
+  if (event.target.id !== 'network-form') return;
+  event.preventDefault();
+  try { await call('set_address', { address: $('#network-address').value.trim() }); closeDialog(); toast(t('toast.address_updated')); await refresh(); }
+  catch (error) { toast(error.message, 'error'); }
 });
 document.addEventListener('change', event => {
-  if (event.target.id === 'connection-mode') { const mode = event.target.value; event.target.value = state?.connection?.mode || 'local'; connectionDialog(mode); }
   if (event.target.id === 'network-select') $('#network-address').value = event.target.value;
 });
-async function pickFiles() {
-  try { const added = await call('pick_files'); if (added) { switchView('transfer'); toast(added === 1 ? 'Fichier ajouté au partage.' : `${added} fichiers ajoutés au partage.`); } }
-  catch (error) { toast(error.message, true); }
-}
+
 document.addEventListener('DOMContentLoaded', async () => {
-  $('#drop-desktop').addEventListener('click', pickFiles);
-  $('#drop-desktop').addEventListener('keydown', event => { if (['Enter',' '].includes(event.key)) { event.preventDefault(); pickFiles(); } });
+  $('#dialog').addEventListener('close', () => { dialogKind = null; });
+  await initTheme();
   await listen('brise:changed', refresh);
   await listen('brise:drag', event => document.body.classList.toggle('dragging', event.payload === true));
-  await listen('brise:toast', event => { toast(event.payload.message, event.payload.error); if (!event.payload.error) switchView('transfer'); });
-  setInterval(countdown, 1000);
-  setInterval(refresh, 3000);
+  await listen('brise:shared', event => {
+    const payload = event.payload || {};
+    if (payload.count) toast(payload.count === 1 ? t('toast.shared_one') : t('toast.shared_other', { count: payload.count }));
+    else toast(errorText(payload), 'error');
+  });
+  setInterval(refresh, 4000);
   await refresh();
 });

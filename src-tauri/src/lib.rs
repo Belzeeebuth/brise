@@ -1,12 +1,15 @@
 pub mod connections;
 pub mod core;
+pub mod i18n;
 pub mod network;
 pub mod server;
 
 use crate::connections::{system_runner, Connections};
 use crate::core::{AppError, Brise, Event};
+use crate::i18n::{system_lang, tr, Lang};
 use crate::network::{hostname, interfaces, qr_svg, valid_address, wifi_payload, Network};
 use crate::server::{gateway_factory, serve, Ctx};
+use serde::ser::{Serialize, Serializer};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU16, Ordering};
@@ -21,11 +24,18 @@ use tauri_plugin_opener::OpenerExt;
 
 pub const DEFAULT_PORT: u16 = 53318;
 
+impl Serialize for AppError {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        self.body().serialize(serializer)
+    }
+}
+
 pub struct App {
     pub brise: Arc<Brise>,
     pub network: Arc<Mutex<Network>>,
     pub connections: Arc<Connections>,
-    pub server_error: Mutex<Option<String>>,
+    pub server_error: Mutex<Option<AppError>>,
+    pub lang: Lang,
     lock: PathBuf,
     hidden_once: AtomicBool,
 }
@@ -33,32 +43,32 @@ pub struct App {
 pub fn paths() -> (PathBuf, PathBuf) {
     let home = dirs::home_dir().unwrap_or_else(|| PathBuf::from("/tmp"));
     let data = std::env::var_os("BRISE_DATA_DIR").map(PathBuf::from).unwrap_or_else(|| dirs::data_dir().unwrap_or_else(|| home.join(".local/share")).join("brise"));
-    let receive = std::env::var_os("BRISE_RECEIVE_DIR").map(PathBuf::from).unwrap_or_else(|| dirs::download_dir().unwrap_or_else(|| home.join("Téléchargements")).join("Brise"));
+    let receive = std::env::var_os("BRISE_RECEIVE_DIR").map(PathBuf::from).unwrap_or_else(|| dirs::download_dir().unwrap_or_else(|| home.join("Downloads")).join("Brise"));
     (data, receive)
 }
 
 fn acquire_lock(data_dir: &std::path::Path) -> Result<PathBuf, String> {
-    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(data_dir).map_err(|_| "data_dirs".to_string())?;
     let lock = data_dir.join("server.lock");
     for _ in 0..2 {
         match std::fs::create_dir(&lock) {
             Ok(()) => {
-                std::fs::write(lock.join("pid"), std::process::id().to_string()).map_err(|e| e.to_string())?;
+                std::fs::write(lock.join("pid"), std::process::id().to_string()).map_err(|_| "lock_failed".to_string())?;
                 return Ok(lock);
             }
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                 let pid = std::fs::read_to_string(lock.join("pid")).ok().and_then(|p| p.trim().parse::<u32>().ok());
                 if let Some(pid) = pid {
                     if pid != std::process::id() && PathBuf::from(format!("/proc/{pid}")).exists() {
-                        return Err("Une autre instance de Brise est déjà lancée (peut-être l’ancienne version dans le navigateur). Quittez-la depuis ses réglages, puis relancez Brise.".into());
+                        return Err("already_running".into());
                     }
                 }
                 let _ = std::fs::remove_dir_all(&lock);
             }
-            Err(error) => return Err(error.to_string()),
+            Err(_) => return Err("lock_failed".into()),
         }
     }
-    Err("Impossible de verrouiller le dossier de données de Brise.".into())
+    Err("lock_failed".into())
 }
 
 pub async fn start(data_dir: PathBuf, receive_dir: PathBuf) -> Result<Arc<App>, String> {
@@ -66,25 +76,34 @@ pub async fn start(data_dir: PathBuf, receive_dir: PathBuf) -> Result<Arc<App>, 
     let brise = match Brise::open(data_dir, receive_dir) {
         Ok(brise) => brise,
         Err(error) => {
+            eprintln!("Brise : {error}");
             let _ = std::fs::remove_dir_all(&lock);
-            return Err(format!("Impossible de préparer les dossiers de Brise : {error}"));
+            return Err("data_dirs".into());
         }
     };
     let port = std::env::var("BRISE_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_PORT);
     let fixed = std::env::var("BRISE_ADDRESS").ok().filter(|a| valid_address(a));
     let network = Arc::new(Mutex::new(Network::new(port, interfaces(), fixed)));
     let connections = Connections::new(brise.clone(), network.clone(), system_runner(), Some(gateway_factory(brise.clone(), network.clone())), None);
-    let app = Arc::new(App { brise: brise.clone(), network: network.clone(), connections: connections.clone(), server_error: Mutex::new(None), lock, hidden_once: AtomicBool::new(false) });
+    let app = Arc::new(App {
+        brise: brise.clone(),
+        network: network.clone(),
+        connections: connections.clone(),
+        server_error: Mutex::new(None),
+        lang: system_lang(),
+        lock,
+        hidden_once: AtomicBool::new(false),
+    });
     let ctx = Arc::new(Ctx { brise: brise.clone(), network: network.clone(), connections: Some(connections.clone()), public: false, gateway_port: AtomicU16::new(0) });
     match serve(ctx, ("0.0.0.0", port)).await {
         Ok((bound, _)) => network.lock().unwrap_or_else(|p| p.into_inner()).port = bound,
         Err(error) => {
-            let message = if error.kind() == std::io::ErrorKind::AddrInUse {
-                format!("Le port {port} est déjà utilisé par une autre application. Fermez-la, ou lancez Brise avec BRISE_PORT=<autre port>.")
+            let failure = if error.kind() == std::io::ErrorKind::AddrInUse {
+                AppError::with(500, "port_in_use", json!({ "port": port }))
             } else {
-                format!("Le serveur de partage n’a pas pu démarrer : {error}")
+                AppError::with(500, "server_failed", json!({ "detail": error.to_string() }))
             };
-            *app.server_error.lock().unwrap_or_else(|p| p.into_inner()) = Some(message);
+            *app.server_error.lock().unwrap_or_else(|p| p.into_inner()) = Some(failure);
         }
     }
     let init = connections.clone();
@@ -115,16 +134,25 @@ impl App {
     pub fn state(&self) -> Value {
         let view = self.brise.desktop_view();
         let network = self.network.lock().unwrap_or_else(|p| p.into_inner()).clone();
-        let server_error = self.server_error.lock().unwrap_or_else(|p| p.into_inner()).clone();
+        let server_error = self.server_error.lock().unwrap_or_else(|p| p.into_inner()).as_ref().map(|e| e.body());
         let connection = self.connections.view();
+        let files: Vec<Value> = view
+            .files
+            .iter()
+            .map(|f| {
+                let mut value = serde_json::to_value(f).unwrap_or_default();
+                value["path"] = json!(f.path);
+                value
+            })
+            .collect();
         json!({
-            "role": "admin",
-            "status": "approved",
+            "lang": self.lang,
+            "version": env!("CARGO_PKG_VERSION"),
             "network": { "address": network.address, "port": network.port, "interfaces": network.interfaces, "hostname": hostname() },
             "connectionMode": connection["mode"],
             "connection": connection,
             "devices": view.devices,
-            "files": view.files,
+            "files": files,
             "transfers": view.transfers,
             "expiresAt": view.expires_at,
             "pairUrl": if server_error.is_some() { None } else { self.pair_url() },
@@ -139,14 +167,19 @@ impl App {
         self.connections.close().await;
         let _ = std::fs::remove_dir_all(&self.lock);
     }
+
+    fn share(&self, handle: &AppHandle, paths: &[PathBuf]) -> Result<usize, AppError> {
+        let added = self.brise.share_paths(paths)?;
+        let scope = handle.asset_protocol_scope();
+        for path in &added {
+            let _ = scope.allow_file(path);
+        }
+        Ok(added.len())
+    }
 }
 
 type Shared<'a> = State<'a, Arc<App>>;
-type Reply<T> = Result<T, String>;
-
-fn text(error: AppError) -> String {
-    error.message
-}
+type Reply<T> = Result<T, AppError>;
 
 #[tauri::command]
 fn get_state(app: Shared<'_>) -> Value {
@@ -155,17 +188,17 @@ fn get_state(app: Shared<'_>) -> Value {
 
 #[tauri::command]
 fn qr(app: Shared<'_>) -> Reply<String> {
-    app.pair_url().map(|url| qr_svg(&url)).ok_or_else(|| "Aucune adresse réseau disponible.".into())
+    app.pair_url().map(|url| qr_svg(&url)).ok_or_else(|| AppError::new(409, "no_address"))
 }
 
 #[tauri::command]
 fn wifi_qr(app: Shared<'_>) -> Reply<String> {
-    app.connections.hotspot().map(|h| qr_svg(&wifi_payload(&h.ssid, &h.password))).ok_or_else(|| "Le point d’accès n’est pas actif.".into())
+    app.connections.hotspot().map(|h| qr_svg(&wifi_payload(&h.ssid, &h.password))).ok_or_else(|| AppError::new(409, "hotspot_inactive"))
 }
 
 #[tauri::command]
 fn decide(app: Shared<'_>, id: String, approve: bool) -> Reply<()> {
-    app.brise.decide(&id, approve).map_err(text)
+    app.brise.decide(&id, approve)
 }
 
 #[tauri::command]
@@ -176,11 +209,11 @@ fn rotate(app: Shared<'_>) {
 #[tauri::command]
 fn set_address(app: Shared<'_>, address: String) -> Reply<()> {
     if app.connections.mode() != connections::Mode::Local || app.connections.busy_switching() {
-        return Err("L’adresse manuelle est réservée au mode réseau local.".into());
+        return Err(AppError::new(409, "manual_local_only"));
     }
     let address = address.trim().to_string();
     if !valid_address(&address) {
-        return Err("Indiquez l’adresse IPv4 du PC sur votre réseau local.".into());
+        return Err(AppError::new(400, "invalid_address"));
     }
     app.network.lock().unwrap_or_else(|p| p.into_inner()).set_manual(address);
     app.brise.rotate();
@@ -189,7 +222,7 @@ fn set_address(app: Shared<'_>, address: String) -> Reply<()> {
 
 #[tauri::command]
 fn select_mode(app: Shared<'_>, mode: String, interface: Option<String>, confirm_wifi_change: Option<bool>) -> Reply<Value> {
-    app.connections.select(&mode, interface, confirm_wifi_change.unwrap_or(false)).map_err(text)
+    app.connections.select(&mode, interface, confirm_wifi_change.unwrap_or(false))
 }
 
 #[tauri::command]
@@ -200,31 +233,42 @@ async fn probe_modes(app: Shared<'_>) -> Reply<Value> {
 #[tauri::command]
 async fn pick_files(handle: AppHandle, app: Shared<'_>) -> Reply<usize> {
     let (tx, rx) = tokio::sync::oneshot::channel();
-    handle.dialog().file().set_title("Choisir des fichiers à partager").pick_files(move |files| {
+    handle.dialog().file().set_title(tr(app.lang, "pick_title")).pick_files(move |files| {
         let _ = tx.send(files);
     });
     let Some(files) = rx.await.ok().flatten() else { return Ok(0) };
     let paths: Vec<PathBuf> = files.into_iter().filter_map(|f| f.into_path().ok()).collect();
-    app.brise.share_paths(&paths).map_err(text)
+    app.share(&handle, &paths)
 }
 
 #[tauri::command]
 fn remove_shared(app: Shared<'_>, id: String) -> Reply<()> {
-    app.brise.remove_shared(&id).map_err(text)
+    app.brise.remove_shared(&id)
 }
 
 #[tauri::command]
 fn open_folder(handle: AppHandle, app: Shared<'_>) -> Reply<()> {
-    handle.opener().open_path(app.brise.receive_dir.to_string_lossy(), None::<&str>).map_err(|_| "Impossible d’ouvrir le gestionnaire de fichiers.".to_string())
+    handle.opener().open_path(app.brise.receive_dir.to_string_lossy(), None::<&str>).map_err(|_| AppError::new(500, "file_manager"))
+}
+
+fn existing_file(app: &App, id: &str) -> Reply<PathBuf> {
+    let file = app.brise.file(id).ok_or_else(|| AppError::new(404, "file_missing"))?;
+    if !file.path.exists() {
+        return Err(AppError::new(404, "file_missing"));
+    }
+    Ok(file.path)
 }
 
 #[tauri::command]
 fn reveal_file(handle: AppHandle, app: Shared<'_>, id: String) -> Reply<()> {
-    let file = app.brise.file(&id).ok_or_else(|| "Ce fichier n’existe plus.".to_string())?;
-    if !file.path.exists() {
-        return Err("Ce fichier a été déplacé ou supprimé.".into());
-    }
-    handle.opener().reveal_item_in_dir(&file.path).map_err(|_| "Impossible d’ouvrir le gestionnaire de fichiers.".to_string())
+    let path = existing_file(&app, &id)?;
+    handle.opener().reveal_item_in_dir(&path).map_err(|_| AppError::new(500, "file_manager"))
+}
+
+#[tauri::command]
+fn open_file(handle: AppHandle, app: Shared<'_>, id: String) -> Reply<()> {
+    let path = existing_file(&app, &id)?;
+    handle.opener().open_path(path.to_string_lossy(), None::<&str>).map_err(|_| AppError::new(500, "file_open"))
 }
 
 #[tauri::command]
@@ -256,31 +300,45 @@ fn quit_from_tray(handle: &AppHandle) {
     });
 }
 
+fn window_focused(handle: &AppHandle) -> bool {
+    handle.get_webview_window("main").map(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false)).unwrap_or(false)
+}
+
 fn bridge(handle: AppHandle, app: Arc<App>) {
     let mut changes = app.brise.subscribe();
     let emitter = handle.clone();
     tauri::async_runtime::spawn(async move {
         while changes.changed().await.is_ok() {
             let _ = emitter.emit("brise:changed", ());
-            tokio::time::sleep(Duration::from_millis(150)).await;
+            tokio::time::sleep(Duration::from_millis(120)).await;
         }
     });
     let mut events = app.brise.events();
+    let lang = app.lang;
     tauri::async_runtime::spawn(async move {
+        let mut pending: Vec<String> = Vec::new();
         loop {
-            match events.recv().await {
-                Ok(Event::PairRequest { name, code }) => {
+            let next = if pending.is_empty() { Some(events.recv().await) } else { tokio::time::timeout(Duration::from_millis(1500), events.recv()).await.ok() };
+            match next {
+                Some(Ok(Event::PairRequest { name, code })) => {
                     show_window(&handle);
-                    notify(&handle, &format!("{name} souhaite se connecter"), &format!("Code {} {} — vérifiez qu’il s’affiche sur le téléphone, puis acceptez dans Brise.", &code[..3], &code[3..]));
+                    let code = format!("{} {}", &code[..3], &code[3..]);
+                    notify(&handle, &tr(lang, "pair_title").replace("{name}", &name), &tr(lang, "pair_body").replace("{code}", &code));
                 }
-                Ok(Event::Received { name }) => {
-                    let focused = handle.get_webview_window("main").map(|w| w.is_visible().unwrap_or(false) && w.is_focused().unwrap_or(false)).unwrap_or(false);
-                    if !focused {
-                        notify(&handle, "Fichier reçu", &name);
+                Some(Ok(Event::Received { name })) => pending.push(name),
+                Some(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
+                Some(Err(_)) => break,
+                None => {
+                    if !window_focused(&handle) {
+                        if pending.len() == 1 {
+                            notify(&handle, tr(lang, "received"), &pending[0]);
+                        } else {
+                            let body = pending.iter().take(4).cloned().collect::<Vec<_>>().join(", ");
+                            notify(&handle, &tr(lang, "received_many").replace("{count}", &pending.len().to_string()), &body);
+                        }
                     }
+                    pending.clear();
                 }
-                Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-                Err(_) => break,
             }
         }
     });
@@ -292,23 +350,25 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![get_state, qr, wifi_qr, decide, rotate, set_address, select_mode, probe_modes, pick_files, remove_shared, open_folder, reveal_file, quit])
+        .invoke_handler(tauri::generate_handler![get_state, qr, wifi_qr, decide, rotate, set_address, select_mode, probe_modes, pick_files, remove_shared, open_folder, reveal_file, open_file, quit])
         .setup(|tauri_app| {
             let handle = tauri_app.handle().clone();
             let (data_dir, receive_dir) = paths();
-            match tauri::async_runtime::block_on(start(data_dir, receive_dir)) {
+            let lang = system_lang();
+            match tauri::async_runtime::block_on(start(data_dir, receive_dir.clone())) {
                 Ok(app) => {
+                    let _ = tauri_app.asset_protocol_scope().allow_directory(&receive_dir, true);
                     tauri_app.manage(app.clone());
                     bridge(handle.clone(), app);
                 }
-                Err(message) => {
+                Err(code) => {
                     let exit = handle.clone();
-                    handle.dialog().message(message).title("Brise ne peut pas démarrer").kind(MessageDialogKind::Error).show(move |_| exit.exit(1));
+                    handle.dialog().message(tr(lang, &code)).title(tr(lang, "startup_title")).kind(MessageDialogKind::Error).show(move |_| exit.exit(1));
                     return Ok(());
                 }
             }
-            let open = MenuItem::with_id(tauri_app, "open", "Ouvrir Brise", true, None::<&str>)?;
-            let quit = MenuItem::with_id(tauri_app, "quit", "Quitter Brise", true, None::<&str>)?;
+            let open = MenuItem::with_id(tauri_app, "open", tr(lang, "tray_open"), true, None::<&str>)?;
+            let quit = MenuItem::with_id(tauri_app, "quit", tr(lang, "tray_quit"), true, None::<&str>)?;
             let menu = Menu::with_items(tauri_app, &[&open, &quit])?;
             let mut tray = TrayIconBuilder::with_id("brise").tooltip("Brise").menu(&menu).show_menu_on_left_click(false);
             if let Some(icon) = tauri_app.default_window_icon() {
@@ -335,7 +395,7 @@ pub fn run() {
                     let _ = window.hide();
                     if let Some(app) = handle.try_state::<Arc<App>>() {
                         if !app.hidden_once.swap(true, Ordering::Relaxed) {
-                            notify(handle, "Brise reste actif", "Le partage continue dans la barre système. Utilisez « Quitter Brise » dans son menu pour l’arrêter.");
+                            notify(handle, tr(app.lang, "still_running_title"), tr(app.lang, "still_running_body"));
                         }
                     }
                 }
@@ -348,17 +408,17 @@ pub fn run() {
                 WindowEvent::DragDrop(DragDropEvent::Drop { paths, .. }) => {
                     let _ = handle.emit("brise:drag", false);
                     if let Some(app) = handle.try_state::<Arc<App>>() {
-                        let message = match app.brise.share_paths(paths) {
-                            Ok(0) => json!({ "error": true, "message": "Aucun fichier à partager." }),
-                            Ok(n) => json!({ "error": false, "message": if n == 1 { "Fichier ajouté au partage.".to_string() } else { format!("{n} fichiers ajoutés au partage.") } }),
-                            Err(error) => json!({ "error": true, "message": error.message }),
+                        let outcome = match app.share(handle, paths) {
+                            Ok(0) => AppError::new(400, "nothing_to_share").body(),
+                            Ok(count) => json!({ "count": count }),
+                            Err(error) => error.body(),
                         };
-                        let _ = handle.emit("brise:toast", message);
+                        let _ = handle.emit("brise:shared", outcome);
                     }
                 }
                 _ => {}
             }
         })
         .run(tauri::generate_context!())
-        .expect("Brise n’a pas pu démarrer");
+        .expect("Brise");
 }

@@ -20,16 +20,20 @@ use tokio_util::io::ReaderStream;
 
 const PHONE_HTML: &str = include_str!("../../ui/phone.html");
 const PHONE_JS: &str = include_str!("../../ui/phone.js");
+const PHONE_CSS: &str = include_str!("../../ui/phone.css");
 const COMMON_JS: &str = include_str!("../../ui/common.js");
+const I18N_JS: &str = include_str!("../../ui/i18n.js");
 const STYLES: &str = include_str!("../../ui/styles.css");
 const ICON: &str = include_str!("../../ui/icon.svg");
+const FONT_LATIN: &[u8] = include_bytes!("../../ui/fonts/manrope-latin.woff2");
+const FONT_LATIN_EXT: &[u8] = include_bytes!("../../ui/fonts/manrope-latin-ext.woff2");
 
 const ATTR: &AsciiSet = &NON_ALPHANUMERIC.remove(b'!').remove(b'#').remove(b'$').remove(b'&').remove(b'+').remove(b'-').remove(b'.').remove(b'^').remove(b'_').remove(b'`').remove(b'|').remove(b'~');
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let status = StatusCode::from_u16(self.status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR);
-        (status, Json(json!({ "error": self.message }))).into_response()
+        (status, Json(self.body())).into_response()
     }
 }
 
@@ -50,21 +54,29 @@ pub fn router(ctx: Arc<Ctx>) -> Router {
         .route("/connect", get(page))
         .route("/phone.js", get(|| async { asset(PHONE_JS, "text/javascript; charset=utf-8") }))
         .route("/common.js", get(|| async { asset(COMMON_JS, "text/javascript; charset=utf-8") }))
+        .route("/i18n.js", get(|| async { asset(I18N_JS, "text/javascript; charset=utf-8") }))
         .route("/styles.css", get(|| async { asset(STYLES, "text/css; charset=utf-8") }))
+        .route("/phone.css", get(|| async { asset(PHONE_CSS, "text/css; charset=utf-8") }))
         .route("/icon.svg", get(|| async { asset(ICON, "image/svg+xml") }))
+        .route("/fonts/manrope-latin.woff2", get(|| async { font(FONT_LATIN) }))
+        .route("/fonts/manrope-latin-ext.woff2", get(|| async { font(FONT_LATIN_EXT) }))
         .route("/api/pair", post(pair))
         .route("/api/state", get(phone_state))
         .route("/api/uploads", post(begin_upload))
         .route("/api/uploads/{id}", get(upload_status).post(append).delete(discard))
         .route("/api/uploads/{id}/finish", post(finish))
         .route("/api/files/{id}", get(download).head(download))
-        .fallback(|| async { AppError::new(404, "Page introuvable.") })
+        .fallback(|| async { AppError::new(404, "not_found") })
         .layer(middleware::from_fn_with_state(ctx.clone(), guard))
         .with_state(ctx)
 }
 
 fn asset(content: &'static str, kind: &'static str) -> Response {
     ([(header::CONTENT_TYPE, kind)], content).into_response()
+}
+
+fn font(content: &'static [u8]) -> Response {
+    ([(header::CONTENT_TYPE, "font/woff2")], content).into_response()
 }
 
 async fn page() -> Response {
@@ -85,7 +97,7 @@ fn secure_headers(headers: &mut HeaderMap) {
 
 fn check(ctx: &Ctx, req: &Request) -> Result<()> {
     let public_origin = if ctx.public {
-        Some(ctx.connections.as_ref().and_then(|c| c.public_origin()).ok_or_else(|| AppError::new(503, "Le mode Internet est fermé."))?)
+        Some(ctx.connections.as_ref().and_then(|c| c.public_origin()).ok_or_else(|| AppError::new(503, "internet_closed"))?)
     } else {
         None
     };
@@ -96,18 +108,18 @@ fn check(ctx: &Ctx, req: &Request) -> Result<()> {
         ctx.network.lock().unwrap_or_else(|p| p.into_inner()).valid_hosts().contains(&host)
     };
     if !valid {
-        return Err(AppError::new(403, "Adresse de connexion non autorisée."));
+        return Err(AppError::new(403, "host_refused"));
     }
     let method = req.method();
     if ![Method::GET, Method::HEAD, Method::POST, Method::DELETE].contains(method) {
-        return Err(AppError::new(405, "Méthode non autorisée."));
+        return Err(AppError::new(405, "method_refused"));
     }
     if [Method::POST, Method::DELETE].contains(method) {
         let expected = public_origin.unwrap_or_else(|| format!("http://{host}"));
         let marked = req.headers().get("x-brise").is_some_and(|v| v == "1");
         let origin_ok = req.headers().get(header::ORIGIN).is_none_or(|o| o.to_str().is_ok_and(|o| o == expected));
         if !marked || !origin_ok {
-            return Err(AppError::new(403, "Origine de la requête non autorisée."));
+            return Err(AppError::new(403, "origin_refused"));
         }
     }
     Ok(())
@@ -139,8 +151,8 @@ fn device(ctx: &Ctx, headers: &HeaderMap) -> Result<Device> {
 }
 
 async fn small_json(body: Body) -> Result<Value> {
-    let bytes = axum::body::to_bytes(body, 4096).await.map_err(|_| AppError::new(413, "Requête trop volumineuse."))?;
-    serde_json::from_slice(&bytes).map_err(|_| AppError::new(400, "Requête invalide."))
+    let bytes = axum::body::to_bytes(body, 4096).await.map_err(|_| AppError::new(413, "request_too_large"))?;
+    serde_json::from_slice(&bytes).map_err(|_| AppError::new(400, "invalid_request"))
 }
 
 async fn pair(State(ctx): Shared, ConnectInfo(addr): ConnectInfo<SocketAddr>, headers: HeaderMap, body: Body) -> Result<Response> {
@@ -160,13 +172,14 @@ async fn phone_state(State(ctx): Shared, headers: HeaderMap) -> Result<Json<Valu
     let mut state = ctx.brise.phone_state(&device);
     state["connectionMode"] = json!(if ctx.public { "internet".into() } else { ctx.connections.as_ref().map(|c| json!(c.mode())).unwrap_or(json!("local")) });
     state["chunkSize"] = json!(CHUNK_SIZE);
+    state["pc"] = json!(crate::network::hostname());
     Ok(Json(state))
 }
 
 async fn begin_upload(State(ctx): Shared, headers: HeaderMap, body: Body) -> Result<Response> {
     let device = device(&ctx, &headers)?;
     let value = small_json(body).await?;
-    let size = value["size"].as_u64().ok_or_else(|| AppError::new(400, "Taille de fichier invalide (10 Go maximum)."))?;
+    let size = value["size"].as_u64().ok_or_else(|| AppError::new(400, "invalid_size"))?;
     let id = ctx.brise.begin_upload(&device, value["name"].as_str().unwrap_or("Fichier"), size)?;
     Ok((StatusCode::CREATED, Json(json!({ "id": id, "chunkSize": CHUNK_SIZE, "offset": 0 }))).into_response())
 }
@@ -183,7 +196,7 @@ async fn append(State(ctx): Shared, Path(id): Path<String>, headers: HeaderMap, 
         .and_then(|v| v.to_str().ok())
         .filter(|v| !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()))
         .and_then(|v| v.parse::<u64>().ok())
-        .ok_or_else(|| AppError::new(400, "Position du bloc manquante."))?;
+        .ok_or_else(|| AppError::new(400, "chunk_offset_missing"))?;
     let offset = ctx.brise.append(&id, &device.id, offset, body.into_data_stream(), IDLE_TIMEOUT).await?;
     Ok(Json(json!({ "offset": offset })))
 }
@@ -236,7 +249,7 @@ impl Drop for DownloadGuard {
 async fn download(State(ctx): Shared, method: Method, Path(id): Path<String>, headers: HeaderMap) -> Result<Response> {
     let device = device(&ctx, &headers)?;
     let file = ctx.brise.file_for(&id, &device.id)?;
-    let gone = || AppError::new(404, "Ce fichier a été modifié, déplacé ou supprimé sur le PC.");
+    let gone = || AppError::new(404, "file_changed");
     let mut handle = tokio::fs::File::open(&file.path).await.map_err(|_| gone())?;
     let meta = handle.metadata().await.map_err(|_| gone())?;
     if !meta.is_file() || (file.direction == Direction::Outgoing && meta.len() != file.size) {
@@ -252,7 +265,7 @@ async fn download(State(ctx): Shared, method: Method, Path(id): Path<String>, he
                 response_headers.insert(header::CONTENT_RANGE, HeaderValue::from_str(&format!("bytes {s}-{e}/{size}")).unwrap());
             }
             None => {
-                let mut response = AppError::new(416, "Plage de téléchargement invalide.").into_response();
+                let mut response = AppError::new(416, "invalid_range").into_response();
                 response.headers_mut().insert(header::CONTENT_RANGE, HeaderValue::from_str(&format!("bytes */{size}")).unwrap());
                 return Ok(response);
             }
@@ -263,7 +276,7 @@ async fn download(State(ctx): Shared, method: Method, Path(id): Path<String>, he
     response_headers.insert(header::CONTENT_TYPE, HeaderValue::from_static("application/octet-stream"));
     response_headers.insert(header::CONTENT_LENGTH, HeaderValue::from(length));
     response_headers.insert(header::ACCEPT_RANGES, HeaderValue::from_static("bytes"));
-    response_headers.insert(header::CONTENT_DISPOSITION, HeaderValue::from_str(&disposition).map_err(|_| AppError::new(500, "Nom de fichier invalide."))?);
+    response_headers.insert(header::CONTENT_DISPOSITION, HeaderValue::from_str(&disposition).map_err(|_| AppError::new(500, "invalid_filename"))?);
     if method == Method::HEAD || length == 0 {
         return Ok((status, response_headers).into_response());
     }

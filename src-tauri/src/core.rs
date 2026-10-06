@@ -29,28 +29,41 @@ pub fn now() -> u64 {
 #[derive(Debug, Clone, PartialEq)]
 pub struct AppError {
     pub status: u16,
-    pub message: String,
+    pub code: String,
+    pub params: serde_json::Value,
 }
 
 impl AppError {
-    pub fn new(status: u16, message: impl Into<String>) -> Self {
-        Self { status, message: message.into() }
+    pub fn new(status: u16, code: impl Into<String>) -> Self {
+        Self { status, code: code.into(), params: serde_json::Value::Null }
+    }
+
+    pub fn with(status: u16, code: impl Into<String>, params: serde_json::Value) -> Self {
+        Self { status, code: code.into(), params }
+    }
+
+    pub fn body(&self) -> serde_json::Value {
+        if self.params.is_null() {
+            serde_json::json!({ "error": self.code })
+        } else {
+            serde_json::json!({ "error": self.code, "params": self.params })
+        }
     }
 }
 
 impl std::fmt::Display for AppError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(&self.message)
+        f.write_str(&self.code)
     }
 }
 
 impl From<io::Error> for AppError {
     fn from(error: io::Error) -> Self {
         if error.raw_os_error() == Some(28) {
-            return AppError::new(507, "Le disque du PC est plein.");
+            return AppError::new(507, "disk_full");
         }
         eprintln!("Brise : {error}");
-        AppError::new(500, "Une erreur est survenue. Réessayez.")
+        AppError::new(500, "unexpected")
     }
 }
 
@@ -177,6 +190,8 @@ pub struct TransferView {
     pub sender: String,
     pub started_at: u64,
     pub paused: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_id: Option<String>,
 }
 
 struct Upload {
@@ -204,6 +219,7 @@ impl Upload {
 }
 
 struct Download {
+    file_id: String,
     owner_id: String,
     sender: String,
     name: String,
@@ -350,7 +366,7 @@ impl Brise {
         let entry = inner.attempts.entry(key.to_string()).or_insert((0, now + 60_000));
         entry.0 += 1;
         if entry.0 > 15 {
-            return Err(AppError::new(429, "Trop de tentatives. Réessayez dans une minute."));
+            return Err(AppError::new(429, "too_many_attempts"));
         }
         Ok(())
     }
@@ -360,7 +376,7 @@ impl Brise {
         let device = {
             let mut inner = self.lock();
             if !equal(code, &inner.pair_token) || now >= inner.expires_at {
-                return Err(AppError::new(403, "Ce QR code a expiré. Scannez le nouveau code sur le PC."));
+                return Err(AppError::new(403, "qr_expired"));
             }
             inner.devices.retain(|d| match d.status {
                 Status::Pending => now.saturating_sub(d.created_at) <= TOKEN_TTL,
@@ -368,7 +384,7 @@ impl Brise {
                 Status::Approved => true,
             });
             if inner.devices.iter().filter(|d| d.status != Status::Revoked).count() >= MAX_DEVICES {
-                return Err(AppError::new(429, "Trop de connexions. Fermez une session sur le PC."));
+                return Err(AppError::new(429, "too_many_devices"));
             }
             let name: String = safe_name(name).chars().take(48).collect();
             let device = Device {
@@ -392,7 +408,7 @@ impl Brise {
         let mut temps = Vec::new();
         {
             let mut inner = self.lock();
-            let device = inner.devices.iter_mut().find(|d| d.id == id).ok_or_else(|| AppError::new(404, "Appareil introuvable."))?;
+            let device = inner.devices.iter_mut().find(|d| d.id == id).ok_or_else(|| AppError::new(404, "device_not_found"))?;
             device.status = if approve { Status::Approved } else { Status::Revoked };
             if !approve {
                 for download in inner.downloads.values().filter(|d| d.owner_id == id) {
@@ -430,7 +446,7 @@ impl Brise {
             .iter_mut()
             .find(|d| equal(&d.secret, secret))
             .filter(|d| d.status != Status::Revoked)
-            .ok_or_else(|| AppError::new(401, "Cette session est fermée. Scannez à nouveau le QR code."))?;
+            .ok_or_else(|| AppError::new(401, "session_closed"))?;
         device.last_seen = now();
         Ok(device.clone())
     }
@@ -439,7 +455,7 @@ impl Brise {
         let inner = self.lock();
         match inner.devices.iter().find(|d| d.id == device_id) {
             Some(d) if d.status == Status::Approved => Ok(()),
-            _ => Err(AppError::new(403, "Validez la connexion sur votre PC.")),
+            _ => Err(AppError::new(403, "not_approved")),
         }
     }
 
@@ -459,6 +475,7 @@ impl Brise {
                 sender: u.sender.clone(),
                 started_at: u.started_at,
                 paused: u.paused(now),
+                file_id: None,
             })
             .chain(inner.downloads.iter().filter(|(_, d)| owner.is_none_or(|o| o == d.owner_id)).map(|(id, d)| TransferView {
                 id: id.clone(),
@@ -470,6 +487,7 @@ impl Brise {
                 sender: d.sender.clone(),
                 started_at: d.started_at,
                 paused: false,
+                file_id: Some(d.file_id.clone()),
             }))
             .collect();
         list.sort_by_key(|t| t.started_at);
@@ -515,8 +533,8 @@ impl Brise {
         DesktopView { devices, files, transfers: Self::transfers(&inner, None), pair_token: inner.pair_token.clone(), expires_at: inner.expires_at }
     }
 
-    pub fn share_paths(&self, paths: &[PathBuf]) -> Result<usize> {
-        let mut added = 0;
+    pub fn share_paths(&self, paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
+        let mut added = Vec::new();
         let mut skipped_dir = false;
         for path in paths {
             let Ok(meta) = fs::metadata(path) else { continue };
@@ -529,14 +547,22 @@ impl Brise {
             }
             let path = fs::canonicalize(path).unwrap_or_else(|_| path.clone());
             let name = safe_name(&path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_default());
-            let id = uuid::Uuid::new_v4().to_string();
-            let file = FileEntry { id: id.clone(), name, size: meta.len(), direction: Direction::Outgoing, sender: "Ce PC".into(), created_at: now(), downloads: 0, disk_name: None, path };
-            self.lock().files.insert(id, file);
-            added += 1;
+            let mut inner = self.lock();
+            let existing = inner.files.values_mut().find(|f| f.direction == Direction::Outgoing && f.path == path);
+            if let Some(file) = existing {
+                file.size = meta.len();
+                file.created_at = now();
+            } else {
+                let id = uuid::Uuid::new_v4().to_string();
+                let file = FileEntry { id: id.clone(), name, size: meta.len(), direction: Direction::Outgoing, sender: String::new(), created_at: now(), downloads: 0, disk_name: None, path: path.clone() };
+                inner.files.insert(id, file);
+            }
+            drop(inner);
+            added.push(path);
         }
         self.notify();
-        if skipped_dir && added == 0 {
-            return Err(AppError::new(400, "Sélectionnez des fichiers, ou compressez votre dossier en ZIP."));
+        if skipped_dir && added.is_empty() {
+            return Err(AppError::new(400, "only_files"));
         }
         Ok(added)
     }
@@ -546,7 +572,7 @@ impl Brise {
             let mut inner = self.lock();
             match inner.files.get(id) {
                 Some(f) if f.direction == Direction::Outgoing => {}
-                _ => return Err(AppError::new(404, "Fichier partagé introuvable.")),
+                _ => return Err(AppError::new(404, "shared_not_found")),
             }
             inner.files.remove(id);
         }
@@ -562,7 +588,7 @@ impl Brise {
         self.allowed(device_id)?;
         match self.lock().files.get(id) {
             Some(f) if f.direction == Direction::Outgoing => Ok(f.clone()),
-            _ => Err(AppError::new(404, "Ce fichier n’est plus disponible.")),
+            _ => Err(AppError::new(404, "file_unavailable")),
         }
     }
 
@@ -572,7 +598,7 @@ impl Brise {
         let now = now();
         self.lock().downloads.insert(
             id.clone(),
-            Download { owner_id: device.id.clone(), sender: device.name.clone(), name: file.name.clone(), size, bytes: 0, started_at: now, last_progress: now, cancel: cancel.clone() },
+            Download { file_id: file.id.clone(), owner_id: device.id.clone(), sender: device.name.clone(), name: file.name.clone(), size, bytes: 0, started_at: now, last_progress: now, cancel: cancel.clone() },
         );
         self.notify();
         (id, cancel)
@@ -612,10 +638,10 @@ impl Brise {
     pub fn begin_upload(&self, device: &Device, name: &str, size: u64) -> Result<String> {
         self.allowed(&device.id)?;
         if size > self.max_file_size {
-            return Err(AppError::new(400, "Taille de fichier invalide (10 Go maximum)."));
+            return Err(AppError::new(400, "invalid_size"));
         }
         if self.uploads_running() >= MAX_UPLOADS {
-            return Err(AppError::new(429, "Trois envois sont déjà en cours."));
+            return Err(AppError::new(429, "too_many_uploads"));
         }
         let id = uuid::Uuid::new_v4().to_string();
         let path = self.partial_dir.join(format!("{id}.part"));
@@ -645,7 +671,7 @@ impl Brise {
     fn owned<'a>(inner: &'a mut Inner, id: &str, device_id: &str) -> Result<&'a mut Upload> {
         match inner.uploads.get_mut(id) {
             Some(u) if u.owner_id == device_id => Ok(u),
-            _ => Err(AppError::new(404, "Envoi introuvable ou expiré.")),
+            _ => Err(AppError::new(404, "upload_not_found")),
         }
     }
 
@@ -681,17 +707,17 @@ impl Brise {
             let mut inner = self.lock();
             let upload = Self::owned(&mut inner, id, device_id)?;
             if upload.in_flight.is_some() {
-                return Err(AppError::new(409, "Un bloc est déjà en cours."));
+                return Err(AppError::new(409, "block_busy"));
             }
             if upload.completion.is_some() {
-                return Err(AppError::new(409, "Cet envoi est déjà terminé."));
+                return Err(AppError::new(409, "upload_done"));
             }
             if offset != upload.bytes {
-                return Err(AppError::new(409, "Position du bloc incorrecte."));
+                return Err(AppError::new(409, "block_offset"));
             }
             let expected = CHUNK_SIZE.min(upload.size - upload.bytes);
             if expected == 0 {
-                return Err(AppError::new(409, "Tous les blocs ont déjà été reçus."));
+                return Err(AppError::new(409, "blocks_complete"));
             }
             let token = upload.cancel.child_token();
             upload.in_flight = Some(token.clone());
@@ -723,16 +749,16 @@ impl Brise {
         let mut last_tick = 0u64;
         loop {
             let next = tokio::select! {
-                _ = token.cancelled() => return Err(AppError::new(409, "Transfert annulé.")),
+                _ = token.cancelled() => return Err(AppError::new(409, "cancelled")),
                 next = tokio::time::timeout(idle, body.next()) => next,
             };
             match next {
-                Err(_) => return Err(AppError::new(408, "Connexion inactive.")),
+                Err(_) => return Err(AppError::new(408, "idle")),
                 Ok(None) => break,
-                Ok(Some(Err(_))) => return Err(AppError::new(400, "Bloc incomplet.")),
+                Ok(Some(Err(_))) => return Err(AppError::new(400, "block_incomplete")),
                 Ok(Some(Ok(chunk))) => {
                     if buffer.len() as u64 + chunk.len() as u64 > expected {
-                        return Err(AppError::new(413, "Bloc trop volumineux."));
+                        return Err(AppError::new(413, "block_too_large"));
                     }
                     buffer.extend_from_slice(&chunk);
                     if let Some(upload) = self.lock().uploads.get_mut(id) {
@@ -747,11 +773,11 @@ impl Brise {
             }
         }
         if buffer.len() as u64 != expected {
-            return Err(AppError::new(400, "Bloc incomplet."));
+            return Err(AppError::new(400, "block_incomplete"));
         }
         self.allowed(device_id)?;
         if token.is_cancelled() {
-            return Err(AppError::new(409, "Transfert annulé."));
+            return Err(AppError::new(409, "cancelled"));
         }
         let path = path.to_path_buf();
         tokio::task::spawn_blocking(move || -> io::Result<()> {
@@ -759,7 +785,7 @@ impl Brise {
             file.write_all_at(&buffer, offset)
         })
         .await
-        .map_err(|_| AppError::new(500, "Écriture du bloc interrompue."))??;
+        .map_err(|_| AppError::new(500, "write_interrupted"))??;
         Ok(offset + expected)
     }
 
@@ -772,7 +798,7 @@ impl Brise {
                 return Ok(completion.clone());
             }
             if upload.in_flight.is_some() || upload.bytes != upload.size {
-                return Err(AppError::new(409, "Le fichier n’est pas encore complet."));
+                return Err(AppError::new(409, "upload_incomplete"));
             }
             upload.completion = Some(Completion::Processing);
         }
@@ -782,8 +808,8 @@ impl Brise {
         tokio::spawn(async move {
             let completion = match brise.store(&id, &device_id).await {
                 Ok(result) => Completion::Done { result },
-                Err(error) if error.status < 500 || error.status == 507 => Completion::Error { error: error.message },
-                Err(_) => Completion::Error { error: "Impossible de terminer l’envoi. Vérifiez l’espace disque et réessayez.".into() },
+                Err(error) if error.status < 500 || error.status == 507 => Completion::Error { error: error.code },
+                Err(_) => Completion::Error { error: "finish_failed".into() },
             };
             if let Some(upload) = brise.lock().uploads.get_mut(&id) {
                 upload.completion = Some(completion);
@@ -806,7 +832,7 @@ impl Brise {
         let link_name = name.clone();
         let (disk_name, destination) = tokio::task::spawn_blocking(move || place(&temp, &receive_dir, &link_name))
             .await
-            .map_err(|_| AppError::new(500, "Une erreur est survenue. Réessayez."))??;
+            .map_err(|_| AppError::new(500, "unexpected"))??;
         let file = FileEntry { id: id.to_string(), name: name.clone(), size, direction: Direction::Incoming, sender, created_at: now(), downloads: 0, disk_name: Some(disk_name), path: destination };
         self.lock().files.insert(id.to_string(), file);
         self.save().await?;
@@ -821,11 +847,11 @@ impl Brise {
             match inner.uploads.get(id) {
                 Some(u) if device_id.is_none_or(|d| d == u.owner_id) => {
                     if u.completion == Some(Completion::Processing) {
-                        return Err(AppError::new(409, "L’envoi est en cours de finalisation."));
+                        return Err(AppError::new(409, "upload_finishing"));
                     }
                     inner.uploads.remove(id)
                 }
-                _ => return Err(AppError::new(404, "Envoi introuvable ou expiré.")),
+                _ => return Err(AppError::new(404, "upload_not_found")),
             }
         };
         if let Some(upload) = removed {
@@ -878,7 +904,7 @@ impl Brise {
     pub async fn save(&self) -> Result<()> {
         let _guard = self.save_lock.lock().await;
         let snapshot: Vec<FileEntry> = self.lock().files.values().filter(|f| f.direction == Direction::Incoming).cloned().collect();
-        let text = serde_json::to_string_pretty(&snapshot).map_err(|_| AppError::new(500, "Historique illisible."))?;
+        let text = serde_json::to_string_pretty(&snapshot).map_err(|_| AppError::new(500, "history_unreadable"))?;
         let data_dir = self.data_dir.clone();
         tokio::task::spawn_blocking(move || -> io::Result<()> {
             let temp = data_dir.join("history.json.tmp");
@@ -888,7 +914,7 @@ impl Brise {
             fs::rename(temp, data_dir.join("history.json"))
         })
         .await
-        .map_err(|_| AppError::new(500, "Une erreur est survenue. Réessayez."))??;
+        .map_err(|_| AppError::new(500, "unexpected"))??;
         Ok(())
     }
 

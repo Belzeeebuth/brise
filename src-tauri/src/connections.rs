@@ -99,7 +99,7 @@ pub struct Connections {
     state: Mutex<State>,
 }
 
-const NETWORK_ERROR: &str = "Impossible de démarrer le point d’accès. Vérifiez les permissions NetworkManager et la compatibilité de la carte Wi-Fi.";
+const NETWORK_ERROR: &str = "hotspot_failed";
 
 fn find_origin(line: &str) -> Option<String> {
     let start = line.find("https://")?;
@@ -124,8 +124,8 @@ impl Connections {
                 mode: Mode::Local,
                 phase: Phase::Ready,
                 message: String::new(),
-                internet: json!({ "available": false, "reason": "Vérification…" }),
-                hotspot_capability: json!({ "available": false, "reason": "Vérification…" }),
+                internet: json!({ "available": false, "reason": "checking" }),
+                hotspot_capability: json!({ "available": false, "reason": "checking" }),
                 hotspot_interfaces: Vec::new(),
                 hotspot: None,
                 public_origin: None,
@@ -157,7 +157,10 @@ impl Connections {
     pub async fn probe(&self) -> Value {
         let internet = match self.run(&self.cloudflared, &["--version"]).await {
             Ok(_) => json!({ "available": true }),
-            Err(_) => json!({ "available": false, "reason": "cloudflared est requis pour le mode Internet.", "install": "sudo pacman -S cloudflared" }),
+            Err(_) => {
+                let install = std::path::Path::new("/usr/bin/pacman").exists().then_some("sudo pacman -S cloudflared");
+                json!({ "available": false, "reason": "cloudflared_required", "install": install, "installUrl": "https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/" })
+            }
         };
         let (hotspot, devices) = match self.run("nmcli", &["-t", "-f", "DEVICE,TYPE", "device", "status"]).await {
             Ok(lines) => {
@@ -171,10 +174,10 @@ impl Connections {
                         devices.push(name.to_string());
                     }
                 }
-                let reason = if devices.is_empty() { "Aucune carte Wi-Fi compatible point d’accès détectée." } else { "" };
+                let reason = if devices.is_empty() { "no_ap_card" } else { "" };
                 (json!({ "available": !devices.is_empty(), "reason": reason }), devices)
             }
-            Err(_) => (json!({ "available": false, "reason": "NetworkManager est inaccessible. Vérifiez qu’il fonctionne dans votre session." }), Vec::new()),
+            Err(_) => (json!({ "available": false, "reason": "networkmanager_unreachable" }), Vec::new()),
         };
         {
             let mut state = self.state();
@@ -244,30 +247,30 @@ impl Connections {
             "local" => Mode::Local,
             "internet" => Mode::Internet,
             "hotspot" => Mode::Hotspot,
-            _ => return Err(AppError::new(400, "Mode inconnu.")),
+            _ => return Err(AppError::new(400, "unknown_mode")),
         };
         {
             let state = self.state();
             if state.job {
-                return Err(AppError::new(409, "Un changement de mode est en cours."));
+                return Err(AppError::new(409, "mode_switching"));
             }
             if mode == Mode::Hotspot {
                 if state.hotspot_capability["available"] != json!(true) {
-                    return Err(AppError::new(409, state.hotspot_capability["reason"].as_str().unwrap_or("Point d’accès indisponible.")));
+                    return Err(AppError::new(409, state.hotspot_capability["reason"].as_str().unwrap_or("hotspot_unavailable")));
                 }
                 if !confirm {
-                    return Err(AppError::new(409, "Confirmez le remplacement de la connexion Wi-Fi sur la carte choisie."));
+                    return Err(AppError::new(409, "confirm_wifi"));
                 }
                 if !interface.as_ref().is_some_and(|i| state.hotspot_interfaces.contains(i)) {
-                    return Err(AppError::new(400, "Carte Wi-Fi invalide."));
+                    return Err(AppError::new(400, "invalid_interface"));
                 }
             }
             if mode == Mode::Internet && state.internet["available"] != json!(true) {
-                return Err(AppError::new(409, state.internet["reason"].as_str().unwrap_or("Mode Internet indisponible.")));
+                return Err(AppError::new(409, state.internet["reason"].as_str().unwrap_or("internet_unavailable")));
             }
         }
         if self.brise.busy() {
-            return Err(AppError::new(409, "Attendez la fin des transferts avant de changer de mode."));
+            return Err(AppError::new(409, "transfers_running"));
         }
         {
             let mut state = self.state();
@@ -324,8 +327,8 @@ impl Connections {
     }
 
     async fn start_tunnel(self: &Arc<Self>) -> Result<(), String> {
-        let factory = self.gateway_factory.clone().ok_or_else(|| "Mode Internet indisponible.".to_string())?;
-        let gateway = factory(self.clone()).await.map_err(|_| "Impossible d’ouvrir le relais local du tunnel.".to_string())?;
+        let factory = self.gateway_factory.clone().ok_or_else(|| "internet_unavailable".to_string())?;
+        let gateway = factory(self.clone()).await.map_err(|_| "tunnel_relay_failed".to_string())?;
         let port = gateway.port;
         self.state().gateway = Some(gateway);
         let result = self.launch_tunnel(port).await;
@@ -344,7 +347,7 @@ impl Connections {
             .mode(0o600)
             .open(&config)
             .and_then(|mut f| io::Write::write_all(&mut f, b"{}\n"))
-            .map_err(|_| "Impossible de préparer le tunnel.".to_string())?;
+            .map_err(|_| "tunnel_prepare_failed".to_string())?;
         let mut command = Command::new(&self.cloudflared);
         command
             .arg("tunnel")
@@ -360,7 +363,7 @@ impl Connections {
                 command.env_remove(key);
             }
         }
-        let mut child = command.spawn().map_err(|_| "Impossible de lancer cloudflared. Installez-le puis réessayez.".to_string())?;
+        let mut child = command.spawn().map_err(|_| "cloudflared_missing".to_string())?;
         let (tx, mut rx) = mpsc::channel::<String>(64);
         if let Some(out) = child.stdout.take() {
             let tx = tx.clone();
@@ -391,9 +394,9 @@ impl Connections {
                     return Ok(origin.clone());
                 }
             }
-            Err("Le tunnel s’est arrêté avant la connexion.".to_string())
+            Err("tunnel_stopped".to_string())
         };
-        let origin = tokio::time::timeout(Duration::from_secs(45), wait).await.map_err(|_| "Le tunnel n’a pas démarré. Vérifiez la connexion Internet du PC.".to_string())??;
+        let origin = tokio::time::timeout(Duration::from_secs(45), wait).await.map_err(|_| "tunnel_timeout".to_string())??;
         let (stop_tx, stop_rx) = oneshot::channel::<()>();
         let (done_tx, done_rx) = oneshot::channel::<()>();
         let generation = {
@@ -427,7 +430,7 @@ impl Connections {
             state.tunnel = None;
             state.public_origin = None;
             state.phase = Phase::Error;
-            state.message = "Le tunnel Internet s’est arrêté. Cliquez sur Réessayer.".into();
+            state.message = "tunnel_died".into();
             state.gateway.take()
         };
         if let Some(gateway) = gateway {
@@ -495,7 +498,7 @@ impl Connections {
                 .filter_map(|a| a.split('/').next())
                 .find(|a| a.parse::<std::net::Ipv4Addr>().is_ok())
                 .map(String::from)
-                .ok_or_else(|| io::Error::other("Le point d’accès n’a pas obtenu d’adresse IPv4."))
+                .ok_or_else(|| io::Error::other("hotspot_no_address"))
         }
         .await;
         match result {
@@ -515,7 +518,7 @@ impl Connections {
 
     async fn stop_hotspot(&self) -> Result<(), String> {
         let Some(h) = self.state().hotspot.clone() else { return Ok(()) };
-        let failure = |_| "Le point d’accès n’a pas pu être arrêté. Vérifiez NetworkManager puis revenez au mode local.".to_string();
+        let failure = |_| "hotspot_stop_failed".to_string();
         let profiles = self.run("nmcli", &["-g", "UUID", "connection", "show"]).await.map_err(failure)?;
         if profiles.lines().any(|p| p == h.uuid) {
             self.run("nmcli", &["--wait", "15", "connection", "delete", "uuid", &h.uuid]).await.map_err(failure)?;
@@ -524,7 +527,7 @@ impl Connections {
         let free = current.is_empty() || current == "--" || current == h.uuid;
         if let (Some(previous), true) = (&h.previous, free) {
             if self.run("nmcli", &["--wait", "30", "connection", "up", "uuid", previous]).await.is_err() {
-                self.state().message = "Le point d’accès est arrêté, mais la connexion Wi-Fi précédente n’a pas pu être rétablie. Reconnectez le PC depuis les réglages réseau.".into();
+                self.state().message = "wifi_not_restored".into();
             }
         }
         if h.radio_was_off && free {
