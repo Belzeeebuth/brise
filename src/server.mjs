@@ -234,7 +234,7 @@ export async function start() {
   const shutdown = async () => { server?.closeAllConnections(); server?.close(); await cleanup(); process.exit(0); };
   try {
     app = await new Brise(config).init();
-    const network = { interfaces: interfaces(), port: Number(process.env.BRISE_PORT || 53317) };
+    const network = { interfaces: interfaces(), port: Number(process.env.BRISE_PORT || 53318) };
     network.address = process.env.BRISE_ADDRESS || network.interfaces[0]?.address || null;
     network.fixed = process.env.BRISE_ADDRESS || null;
     if (network.address && isIP(network.address) !== 4) throw new Error('BRISE_ADDRESS doit être une adresse IPv4.');
@@ -259,7 +259,10 @@ export async function start() {
     }));
     server.requestTimeout = 0;
     server.headersTimeout = 15000;
-    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(network.port, '0.0.0.0', resolve); });
+    await new Promise((resolve, reject) => { server.once('error', reject); server.listen(network.port, '0.0.0.0', resolve); }).catch(error => {
+      if (error.code === 'EADDRINUSE') throw new Error(`Le port ${network.port} est déjà utilisé par une autre application. Fermez-la, ou choisissez un autre port avec BRISE_PORT.`);
+      throw error;
+    });
     network.port = server.address().port;
     const adminUrl = `http://127.0.0.1:${network.port}/#admin=${app.adminSecret}`;
     await writeFile(runtime, JSON.stringify({ pid: process.pid, session: app.sessionId, adminUrl, port: network.port }), { mode: 0o600 });

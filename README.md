@@ -42,12 +42,12 @@ Le lien destiné au téléphone est celui du QR code dans l’interface.
 
 Le sélecteur **Connexion**, à côté du QR code, propose trois modes.
 L’application démarre en mode local ; elle n’ouvre aucun tunnel automatiquement.
-Après cette mise à jour, quittez Brise depuis ses réglages puis relancez-le
-pour charger le nouveau serveur.
 
 ### Réseau local
 
 Le fonctionnement initial : même réseau local, aucune dépendance à Internet.
+Si le PC change de réseau pendant que Brise tourne, l’adresse et le QR code se
+mettent à jour d’eux-mêmes ; les téléphones associés scannent le nouveau QR.
 
 ### Internet
 
@@ -70,12 +70,9 @@ HTTP sur la boucle locale expose seulement les routes destinées au téléphone.
 Les anciens liens cessent de fonctionner à l’arrêt du tunnel. Cloudflared est
 arrêté lorsque vous changez de mode ou quittez Brise normalement.
 
-Les envois depuis Internet sont découpés en blocs de 8 Mio, sous la limite des
-requêtes HTTP du relais. Chaque fichier est assemblé sur le PC, puis enregistré
-avec les mêmes contrôles qu’en local. La finalisation est suivie par des requêtes
-courtes pour ne pas dépendre du délai d’une seule requête de longue durée.
-Prévoyez temporairement jusqu’à deux fois la taille du fichier sur le disque.
-Les envois abandonnés sont nettoyés après quinze minutes d’inactivité.
+Les blocs de 8 Mio utilisés pour les envois restent sous la limite des requêtes
+HTTP du relais. Le mode Internet étant en HTTPS, l’iPhone peut aussi enregistrer
+directement les photos et vidéos reçues dans Photos (voir **Partager**).
 
 ### Point d’accès Wi-Fi
 
@@ -109,7 +106,15 @@ associés sont déconnectés et doivent scanner le nouveau QR code.
 5. **PC → téléphone** : déposez des fichiers sur le PC, puis ouvrez **Recevoir**
    sur le téléphone et téléchargez les fichiers souhaités.
 6. **Téléphone → PC** : ouvrez **Envoyer au PC**, puis choisissez vos fichiers.
-   Gardez la page ouverte pendant le transfert.
+   Gardez la page ouverte pendant le transfert. Si l’écran se verrouille ou si
+   la connexion saute, l’envoi reprend là où il s’était arrêté en revenant sur
+   la page.
+
+Sur iPhone, les fichiers téléchargés depuis le PC arrivent dans l’app **Fichiers**
+(dossier Téléchargements). En mode Internet, un bouton **Photos** à côté des images
+et vidéos de moins de 500 Mo ouvre la feuille de partage d’iOS pour les enregistrer
+directement dans Photos. Ce bouton n’existe pas en mode local : Safari réserve
+cette fonction aux pages HTTPS. Sur Android, le même bouton s’appelle **Partager**.
 
 Les fichiers reçus vont dans **Brise**, à l’intérieur du dossier de téléchargements
 XDG du PC. Par défaut, en l’absence de réglage XDG : `~/Téléchargements/Brise`.
@@ -131,14 +136,23 @@ Le bouton **Ouvrir le dossier** et l’historique permettent de les retrouver.
   appareils déjà acceptés ; ils peuvent être déconnectés individuellement.
 - Le compteur « Récupéré » indique que le serveur a transmis un fichier complet
   au navigateur. Il ne garantit pas l’enregistrement final par le système mobile.
-- Les téléchargements acceptent les requêtes HTTP Range. Les envois interrompus
-  repartent du début lorsque vous choisissez **Réessayer**.
+- Les envois sont découpés en blocs de 8 Mio écrits directement à côté de leur
+  destination : pas de seconde copie, pas besoin du double d’espace disque.
+- Après une coupure, le téléphone redemande au PC le dernier bloc reçu et reprend
+  à partir de là, jusqu’à six essais automatiques ; ensuite **Réessayer** reprend
+  au même endroit. Un envoi sans activité depuis 30 secondes est affiché « en
+  pause » sur le PC et ne bloque ni les autres envois ni les changements de mode.
+  Il est supprimé après quinze minutes d’inactivité.
+- Une connexion de transfert inactive depuis deux minutes est fermée : un
+  téléphone mis en veille en plein téléchargement ne bloque rien.
+- Les téléchargements acceptent les requêtes HTTP Range.
 
 ## Réseau et confidentialité
 
 Le QR code contient un lien vers le PC et un jeton de connexion temporaire.
 Les fichiers voyagent sur le réseau choisi, **pas à travers le QR code**.
-Le serveur écoute sur les interfaces IPv4 du PC au port **53317/TCP** par défaut.
+Le serveur écoute sur les interfaces IPv4 du PC au port **53318/TCP** par défaut
+(53317 est celui de LocalSend : les deux applications peuvent tourner ensemble).
 
 Les modes locaux utilisent **HTTP sans chiffrement du transport**. Utilisez-les
 sur un réseau de confiance. Le point d’accès protège la liaison Wi-Fi par WPA2. Le jeton et la validation sur le PC contrôlent l’accès,
@@ -155,9 +169,13 @@ partagés par le PC, sans sélection par destinataire.
 - Choisissez la bonne adresse IPv4 dans **Réglages**. Sur un PC avec plusieurs
   interfaces, une interface VPN ou virtuelle peut avoir été sélectionnée.
 - Évitez un réseau invité qui isole les appareils et vérifiez votre VPN.
-- Si un pare-feu bloque les connexions entrantes, autorisez le port 53317/TCP
+- Si un pare-feu bloque les connexions entrantes, autorisez le port 53318/TCP
   depuis votre réseau local dans votre outil de gestion du pare-feu.
-  Brise ne modifie pas les règles du système.
+  Brise ne modifie pas les règles du système. Avec ufw, par exemple :
+  `sudo ufw allow in on wlan0 proto tcp from 192.168.1.0/24 to any port 53318`
+  pour le réseau local, et
+  `sudo ufw allow in on wlan0 proto tcp from 10.42.0.0/24 to 10.42.0.1 port 53318`
+  pour le point d’accès (adaptez l’interface et le réseau).
 - Sans box, utilisez le mode **Point d’accès Wi-Fi**. Si le téléphone indique
   que ce réseau n’a pas Internet, choisissez de rester connecté.
 - Si le mode Internet est indisponible, installez `cloudflared` puis cliquez sur
@@ -169,8 +187,8 @@ Variables d’environnement à définir avant de démarrer le serveur :
 
 | Variable | Usage |
 | --- | --- |
-| `BRISE_PORT` | Port HTTP, par défaut `53317` |
-| `BRISE_ADDRESS` | Adresse IPv4 du PC à encoder dans le QR |
+| `BRISE_PORT` | Port HTTP, par défaut `53318` |
+| `BRISE_ADDRESS` | Adresse IPv4 fixe à encoder dans le QR (sinon suivie automatiquement) |
 | `BRISE_RECEIVE_DIR` | Dossier de réception personnalisé |
 | `BRISE_DATA_DIR` | Historique, copies de partage et état du serveur |
 
@@ -191,18 +209,11 @@ node scripts/preview.mjs
 
 Les tests couvrent l’approbation et la révocation, les transferts bidirectionnels,
 les noms de fichiers et doublons, les flux interrompus, la persistance, les requêtes
-Range, les accès anonymes/interdits et les origines HTTP. Les nouveaux tests
-couvrent les blocs binaires, les changements de mode, la fermeture du tunnel,
-l’isolation de l’administration et la restauration du Wi-Fi (commandes simulées). Un test utilise un vrai
-serveur HTTP ; il est explicitement ignoré si l’environnement interdit les sockets.
-
-Dans l’environnement de développement de cette livraison, les sockets réseau
-sont interdites et Firefox headless se termine avant le rendu. Les tests de logique
-et des routes en mémoire ont été exécutés ; le QR SVG a été relu avec ZBar.
-Le fonctionnement du mode local a été confirmé par l’utilisateur.
-**Le tunnel Internet et le point d’accès réels restent à vérifier depuis la
-session CachyOS** : cet environnement interdit les sockets réseau et l’accès
-à NetworkManager. `cloudflared` n’est pas installé dans cet environnement.
+Range, les accès anonymes/interdits et les origines HTTP, les blocs binaires et leur
+reprise, les envois en pause, le suivi des changements de réseau, les changements
+de mode, la fermeture du tunnel, l’isolation de l’administration et la restauration
+du Wi-Fi (commandes simulées). Deux tests utilisent un vrai serveur HTTP ; ils sont
+ignorés si l’environnement interdit les sockets.
 
 Organisation : `src/` pour le serveur, `public/` pour les interfaces, `tests/` pour
 les tests et `vendor/` pour le générateur QR autonome avec ses licences conservées.
