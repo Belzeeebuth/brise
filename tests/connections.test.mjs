@@ -234,3 +234,35 @@ test('public listener rejects every admin capability even with a valid PC cookie
 test('Wi-Fi QR escapes separator characters', () => {
   assert.equal(wifiPayload('Brise-test', 'abc;def:g'), 'WIFI:T:WPA;S:Brise-test;P:abc\\;def\\:g;;');
 });
+
+test('local mode follows a network change: new address, new QR, and the new host is accepted', async t => {
+  const { app, network } = await setup(t);
+  let current = [{ name: 'wlan0', address: '192.168.1.42' }];
+  const modes = await new Connections(app, network, { ...fakeSystem(), getInterfaces: () => current }).init();
+  const handler = createHandler(app, network, { connections: modes });
+  const token = app.pairToken;
+  current = [{ name: 'wlan0', address: '10.0.0.7' }];
+  modes.syncedAt = 0;
+  const res = await request(handler, '/', { headers: { host: '10.0.0.7:53317', origin: undefined } });
+  assert.equal(res.statusCode, 200);
+  assert.equal(network.address, '10.0.0.7'); assert.notEqual(app.pairToken, token);
+  assert.equal(modes.origin(), 'http://10.0.0.7:53317');
+  assert.equal((await request(handler, '/', { headers: { host: '192.168.1.42:53317' } })).statusCode, 403);
+  await modes.close();
+});
+
+test('a manual address is kept while present; BRISE_ADDRESS is always restored', async t => {
+  const { app, network } = await setup(t);
+  let current = [{ name: 'wlan0', address: '192.168.1.42' }, { name: 'tun0', address: '172.16.0.2' }];
+  const modes = await new Connections(app, network, { ...fakeSystem(), getInterfaces: () => current }).init();
+  network.address = '172.16.0.2'; network.manual = true;
+  modes.syncedAt = 0; modes.syncNetwork();
+  assert.equal(network.address, '172.16.0.2');
+  current = [{ name: 'wlan0', address: '192.168.1.42' }];
+  modes.syncedAt = 0; modes.syncNetwork();
+  assert.equal(network.address, '192.168.1.42'); assert.equal(network.manual, false);
+  network.fixed = '203.0.113.5'; network.address = '10.42.0.1';
+  modes.refreshNetwork();
+  assert.equal(network.address, '203.0.113.5');
+  await modes.close();
+});

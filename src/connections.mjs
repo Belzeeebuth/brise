@@ -80,7 +80,16 @@ export class Connections {
   }
   refreshNetwork() {
     this.network.interfaces = this.getInterfaces();
-    if (!this.network.interfaces.some(i => i.address === this.network.address)) this.network.address = this.network.interfaces[0]?.address || null;
+    if (this.network.fixed) { this.network.address = this.network.fixed; return; }
+    if (!this.network.interfaces.some(i => i.address === this.network.address)) this.network.manual = false;
+    if (!this.network.manual) this.network.address = this.network.interfaces[0]?.address || null;
+  }
+  syncNetwork() {
+    if (this.mode !== 'local' || this.status !== 'ready' || this.job || Date.now() - (this.syncedAt || 0) < 2000) return;
+    this.syncedAt = Date.now();
+    const previous = this.network.address;
+    this.refreshNetwork();
+    if (this.network.address !== previous) this.app.rotate();
   }
   async startTunnel() {
     this.gateway = await this.createGateway();

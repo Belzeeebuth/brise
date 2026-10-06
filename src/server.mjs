@@ -60,6 +60,7 @@ export function createHandler(app, network, { openFolder = () => {}, shutdown = 
     try {
       const host = req.headers.host;
       if (publicGateway && (!connections?.publicOrigin || connections.status !== 'ready')) throw new AppError(503, 'Le mode Internet est fermé.');
+      if (!publicGateway) connections?.syncNetwork?.();
       const validHosts = publicGateway ? [`127.0.0.1:${gatewayPort()}`] : ['localhost', '127.0.0.1', ...network.interfaces.map(i => i.address), network.address].filter(Boolean).map(ip => `${ip}:${network.port}`);
       if (!validHosts.includes(host)) throw new AppError(403, 'Adresse de connexion non autorisée.');
       const url = new URL(req.url, `http://${host}`);
@@ -125,7 +126,7 @@ export function createHandler(app, network, { openFolder = () => {}, shutdown = 
           admin(); const { address } = await body(req);
           if (connections && (connections.mode !== 'local' || connections.status === 'starting')) throw new AppError(409, 'L’adresse manuelle est réservée au mode réseau local.');
           if (isIP(address) !== 4 || address.startsWith('127.') || ['0.0.0.0', '255.255.255.255'].includes(address)) throw new AppError(400, 'Indiquez l’adresse IPv4 du PC sur votre réseau local.');
-          network.address = address; app.rotate(); return json(res, 200, { ok: true });
+          network.address = address; network.fixed = null; network.manual = true; app.rotate(); return json(res, 200, { ok: true });
         }
         const deviceMatch = path.match(/^\/api\/devices\/([0-9a-f-]+)$/);
         if (deviceMatch && method === 'POST') {
@@ -234,6 +235,7 @@ export async function start() {
     app = await new Brise(config).init();
     const network = { interfaces: interfaces(), port: Number(process.env.BRISE_PORT || 53317) };
     network.address = process.env.BRISE_ADDRESS || network.interfaces[0]?.address || null;
+    network.fixed = process.env.BRISE_ADDRESS || null;
     if (network.address && isIP(network.address) !== 4) throw new Error('BRISE_ADDRESS doit être une adresse IPv4.');
     chunks = await new ChunkUploads(app).init();
     connections = new Connections(app, network, {
