@@ -312,3 +312,17 @@ test('an abandoned upload is paused: it frees its slot, allows mode changes and 
   assert.equal(chunks.records.size, 0); assert.deepEqual(await readdir(app.partialDir), []);
   await modes.close();
 });
+
+test('files added on the PC also go through chunks and land in the shared cache', async t => {
+  const { app, chunks, phone } = await setup(t);
+  const admin = { role: 'admin', id: 'admin', name: 'Ce PC' };
+  const upload = await chunks.begin(admin, { name: 'partage.pdf', size: 5 });
+  await chunks.append(upload.id, admin, 0, stream('%PDF-'));
+  chunks.startFinish(upload.id, admin); const r = chunks.get(upload.id, admin); await r.job;
+  assert.equal(r.completion.status, 'done');
+  const file = app.fileFor(r.completion.result.id, phone);
+  assert.equal(file.direction, 'outgoing'); assert.equal(file.path, join(app.cacheDir, `${upload.id}.bin`));
+  assert.equal(await readFile(file.path, 'utf8'), '%PDF-');
+  await chunks.discard(upload.id);
+  assert.equal(await readFile(file.path, 'utf8'), '%PDF-');
+});
