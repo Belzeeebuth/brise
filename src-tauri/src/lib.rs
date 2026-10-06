@@ -221,7 +221,7 @@ fn set_address(app: Shared<'_>, address: String) -> Reply<()> {
 }
 
 #[tauri::command]
-fn select_mode(app: Shared<'_>, mode: String, interface: Option<String>, confirm_wifi_change: Option<bool>) -> Reply<Value> {
+async fn select_mode(app: Shared<'_>, mode: String, interface: Option<String>, confirm_wifi_change: Option<bool>) -> Reply<Value> {
     app.connections.select(&mode, interface, confirm_wifi_change.unwrap_or(false))
 }
 

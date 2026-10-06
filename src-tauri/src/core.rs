@@ -255,6 +255,7 @@ pub struct Brise {
     changed: watch::Sender<u64>,
     events: broadcast::Sender<Event>,
     save_lock: tokio::sync::Mutex<()>,
+    runtime: Option<tokio::runtime::Handle>,
 }
 
 fn private_dir(path: &Path) -> io::Result<()> {
@@ -326,6 +327,7 @@ impl Brise {
             changed,
             events,
             save_lock: tokio::sync::Mutex::new(()),
+            runtime: tokio::runtime::Handle::try_current().ok(),
         }))
     }
 
@@ -805,7 +807,7 @@ impl Brise {
         let brise = self.clone();
         let id = id.to_string();
         let device_id = device_id.to_string();
-        tokio::spawn(async move {
+        let job = async move {
             let completion = match brise.store(&id, &device_id).await {
                 Ok(result) => Completion::Done { result },
                 Err(error) if error.status < 500 || error.status == 507 => Completion::Error { error: error.code },
@@ -816,7 +818,11 @@ impl Brise {
                 upload.updated_at = now();
             }
             brise.notify();
-        });
+        };
+        match &self.runtime {
+            Some(runtime) => drop(runtime.spawn(job)),
+            None => drop(tokio::spawn(job)),
+        }
         self.notify();
         Ok(Completion::Processing)
     }

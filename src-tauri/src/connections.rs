@@ -96,6 +96,7 @@ pub struct Connections {
     get_interfaces: InterfaceSource,
     cloudflared: String,
     journal: PathBuf,
+    runtime: Option<tokio::runtime::Handle>,
     state: Mutex<State>,
 }
 
@@ -120,6 +121,7 @@ impl Connections {
             get_interfaces: get_interfaces.unwrap_or_else(|| Arc::new(interfaces)),
             cloudflared: std::env::var("BRISE_CLOUDFLARED").unwrap_or_else(|_| "cloudflared".into()),
             journal,
+            runtime: tokio::runtime::Handle::try_current().ok(),
             state: Mutex::new(State {
                 mode: Mode::Local,
                 phase: Phase::Ready,
@@ -280,7 +282,11 @@ impl Connections {
         }
         self.brise.revoke_all();
         let this = self.clone();
-        tokio::spawn(async move { this.transition(mode, interface).await });
+        let job = async move { this.transition(mode, interface).await };
+        match &self.runtime {
+            Some(runtime) => drop(runtime.spawn(job)),
+            None => drop(tokio::spawn(job)),
+        }
         Ok(self.view())
     }
 

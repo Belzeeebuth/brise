@@ -293,3 +293,15 @@ async fn internet_mode_exposes_only_phone_routes_and_a_dead_tunnel_closes_everyt
     let closed = tokio::net::TcpStream::connect(("127.0.0.1", port)).await;
     assert!(closed.is_err() || raw(port, format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")).await.contains("503"));
 }
+
+#[tokio::test]
+async fn switching_modes_from_a_plain_thread_does_not_panic() {
+    let s = setup();
+    let c = connections(&s, Fake::new(false, false)).await;
+    let from_ui = c.clone();
+    let outcome = std::thread::spawn(move || from_ui.select("hotspot", Some("wlan0".into()), true).map(|_| ())).join();
+    assert!(matches!(outcome, Ok(Ok(()))), "le changement de mode a paniqué hors du runtime");
+    settle(&c).await;
+    assert_eq!(c.view()["mode"], "hotspot");
+    assert_eq!(c.view()["status"], "ready");
+}
