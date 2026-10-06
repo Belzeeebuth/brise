@@ -63,10 +63,43 @@ function showError(message) {
 function empty(title, description, glyph = 'folder') {
   return `<div class="empty-files"><span class="empty-icon">${icon(glyph)}</span><div><strong>${escape(title)}</strong><p>${escape(description)}</p></div></div>`;
 }
+const mediaTypes = { jpg:'image/jpeg', jpeg:'image/jpeg', png:'image/png', heic:'image/heic', webp:'image/webp', gif:'image/gif', avif:'image/avif', mp4:'video/mp4', mov:'video/quicktime', m4v:'video/x-m4v', webm:'video/webm' };
+const mediaType = name => mediaTypes[name.split('.').pop().toLowerCase()];
+const shareLimit = 500 * 1000 * 1000;
+const canShareFiles = (() => { try { return window.isSecureContext && !!navigator.canShare && navigator.canShare({ files:[new File([''], 'test.jpg', { type:'image/jpeg' })] }); } catch { return false; } })();
+const shareLabel = /iPhone|iPad/i.test(navigator.userAgent) ? 'Photos' : 'Partager';
+const prepared = new Map();
+function shareButton(file) {
+  if (!canShareFiles || !mediaType(file.name) || file.size > shareLimit) return '';
+  return `<button class="button secondary" data-share="${file.id}" aria-label="${prepared.has(file.id) ? 'Enregistrer' : shareLabel} ${escape(file.name)}">${icon(fileType(file.name))}${prepared.has(file.id) ? 'Enregistrer' : shareLabel}</button>`;
+}
+async function shareFile(button) {
+  const file = state?.files.find(f => f.id === button.dataset.share); if (!file) return;
+  let shared = prepared.get(file.id);
+  if (!shared) {
+    button.disabled = true; button.textContent = 'Préparation…';
+    const response = await fetch(`/api/files/${file.id}`);
+    if (!response.ok || !response.body) throw new Error('Ce fichier n’est plus disponible.');
+    const reader = response.body.getReader(), parts = []; let received = 0;
+    for (;;) {
+      const { done, value } = await reader.read(); if (done) break;
+      parts.push(value); received += value.length;
+      button.textContent = `Préparation… ${Math.floor(received / Math.max(file.size, 1) * 100)} %`;
+    }
+    shared = new File(parts, file.name, { type:mediaType(file.name) });
+    prepared.set(file.id, shared);
+    button.innerHTML = `${icon(fileType(file.name))}Enregistrer`;
+  }
+  try { await navigator.share({ files:[shared] }); }
+  catch (error) {
+    if (error.name === 'NotAllowedError') toast('Fichier prêt : touchez « Enregistrer ».');
+    else if (error.name !== 'AbortError') throw error;
+  }
+}
 function fileRow(file, mode) {
   const type = fileType(file.name);
   const detail = mode === 'history' ? `${escape(file.sender)} · ${formatDate(file.createdAt)}` : mode === 'phone' ? 'Depuis votre PC' : file.downloads ? `${file.downloads} téléchargement${file.downloads > 1 ? 's' : ''}` : 'En attente de téléchargement';
-  return `<div class="file-row"><span class="file-icon ${type}">${icon(type)}</span><div class="file-meta"><span class="file-name" title="${escape(file.name)}">${escape(file.name)}</span><div class="file-details"><span>${formatSize(file.size)}</span><span>·</span><span>${detail}</span></div></div>${mode === 'shared' ? `<span class="file-status">${icon(file.downloads ? 'check-circle' : 'check')}${file.downloads ? 'Récupéré' : 'Disponible'}</span><button class="icon-button" data-remove="${file.id}" aria-label="Retirer du partage ${escape(file.name)}" title="Retirer du partage">${icon('x')}</button>` : `<a class="${mode === 'phone' ? 'button secondary' : 'icon-button'}" href="/api/files/${file.id}" download aria-label="Télécharger ${escape(file.name)}">${icon('download')}${mode === 'phone' ? 'Recevoir' : ''}</a>`}</div>`;
+  return `<div class="file-row"><span class="file-icon ${type}">${icon(type)}</span><div class="file-meta"><span class="file-name" title="${escape(file.name)}">${escape(file.name)}</span><div class="file-details"><span>${formatSize(file.size)}</span><span>·</span><span>${detail}</span></div></div>${mode === 'shared' ? `<span class="file-status">${icon(file.downloads ? 'check-circle' : 'check')}${file.downloads ? 'Récupéré' : 'Disponible'}</span><button class="icon-button" data-remove="${file.id}" aria-label="Retirer du partage ${escape(file.name)}" title="Retirer du partage">${icon('x')}</button>` : `${mode === 'phone' ? shareButton(file) : ''}<a class="${mode === 'phone' ? 'button secondary' : 'icon-button'}" href="/api/files/${file.id}" download aria-label="Télécharger ${escape(file.name)}">${icon('download')}${mode === 'phone' ? 'Recevoir' : ''}</a>`}</div>`;
 }
 function deviceCard(d) {
   const pending = d.status === 'pending';
@@ -81,6 +114,7 @@ function updateState(next) {
     if (next.status === 'pending') { phoneScreen('waiting-screen'); $('#pair-code').textContent = next.code?.replace(/(.{3})/, '$1 '); return; }
     phoneScreen('phone-workspace');
     $('#phone-file-count').textContent = next.files.length;
+    for (const id of prepared.keys()) if (!next.files.some(f => f.id === id)) prepared.delete(id);
     const key = JSON.stringify(next.files);
     if (key !== lastFiles) { $('#phone-file-list').innerHTML = next.files.length ? next.files.map(f => fileRow(f, 'phone')).join('') : empty('Aucun fichier disponible', 'Ajoutez des fichiers dans Brise sur votre PC.'); lastFiles = key; }
   } else {
@@ -158,7 +192,7 @@ function switchPhoneTab(tab) {
 }
 function transferRow(item, local = false) {
   const percentage = item.size ? Math.min(100, Math.floor(item.bytes / item.size * 100)) : 0;
-  const caption = local ? item.status === 'queued' ? 'Dans la file d’attente' : percentage === 100 ? 'Finalisation sur le PC…' : 'Envoi au PC…' : item.direction === 'download' ? `Vers ${item.sender}` : `Depuis ${item.sender}`;
+  const caption = local ? item.status === 'queued' ? 'Dans la file d’attente' : item.retrying ? 'Connexion perdue, nouvel essai…' : percentage === 100 ? 'Finalisation sur le PC…' : state?.role === 'admin' ? 'Ajout au partage…' : 'Envoi au PC…' : item.paused ? `En pause · en attente de ${item.sender}` : item.direction === 'download' ? `Vers ${item.sender}` : `Depuis ${item.sender}`;
   return `<div class="file-row transfer-row"><span class="file-icon">${icon(item.direction === 'download' ? 'download' : 'upload')}</span><div class="transfer-body"><div class="transfer-line"><span>${escape(item.name)}</span><span>${percentage} %</span></div><progress value="${percentage}" max="100" aria-label="Progression de ${escape(item.name)}"></progress><div class="transfer-caption">${escape(caption)} · ${formatSize(item.bytes)} / ${formatSize(item.size)}</div></div>${local ? `<button class="icon-button" data-cancel="${item.id}" aria-label="Annuler l’envoi de ${escape(item.name)}">${icon('x')}</button>` : ''}</div>`;
 }
 function renderTransfers() {
@@ -184,54 +218,91 @@ function addFiles(files) {
   if (state.role === 'admin') switchView('transfer'); else switchPhoneTab('send');
   renderTransfers(); processQueue();
 }
+const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 function xhrUpload(item, path, blob, headers, offset = 0) {
   return new Promise((resolve, reject) => {
     if (item.status === 'cancelled') return reject(new Error('Envoi annulé.'));
     const xhr = new XMLHttpRequest(); item.xhr = xhr;
+    const fail = (message, status = 0) => reject(Object.assign(new Error(message), { status }));
     xhr.open('POST', path); xhr.setRequestHeader('X-Brise', '1');
     xhr.setRequestHeader('Content-Type', 'application/octet-stream');
     for (const [key, value] of Object.entries(headers)) xhr.setRequestHeader(key, value);
-    xhr.timeout = 30 * 60 * 1000;
-    xhr.upload.onprogress = event => { item.bytes = offset + event.loaded; renderTransfers(); };
+    xhr.timeout = 10 * 60 * 1000;
+    xhr.upload.onprogress = event => { item.bytes = offset + event.loaded; item.retrying = false; renderTransfers(); };
     xhr.onload = () => {
       if (xhr.status >= 200 && xhr.status < 300) return resolve();
       let message; try { message = JSON.parse(xhr.responseText).error; } catch {}
-      reject(new Error(message || 'Le transfert n’a pas abouti. Réessayez.'));
+      fail(message || 'Le transfert n’a pas abouti. Réessayez.', xhr.status);
     };
-    xhr.onerror = () => reject(new Error('Connexion interrompue. Vérifiez le réseau, puis réessayez.'));
-    xhr.ontimeout = () => reject(new Error('Le transfert a pris trop de temps. Réessayez.'));
-    xhr.onabort = () => reject(new Error('Envoi annulé.'));
+    xhr.onerror = () => fail('Connexion interrompue. Vérifiez le réseau, puis réessayez.');
+    xhr.ontimeout = () => fail('Le transfert a pris trop de temps. Réessayez.');
+    xhr.onabort = () => fail('Envoi annulé.');
     xhr.send(blob);
   });
 }
+function checkCancelled(item) { if (item.status === 'cancelled') throw new Error('Envoi annulé.'); }
+function discardRemote(item) {
+  const id = item.remoteId; item.remoteId = null;
+  if (id) api(`/api/uploads/${id}`, undefined, 'DELETE').catch(() => {});
+}
+async function sendChunks(item) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      checkCancelled(item);
+      const progress = await api(`/api/uploads/${item.remoteId}`, undefined, 'GET');
+      if (progress.status === 'uploading') {
+        item.bytes = progress.offset;
+        for (let offset = progress.offset; offset < item.size; offset += item.chunkSize) {
+          checkCancelled(item);
+          await xhrUpload(item, `/api/uploads/${item.remoteId}`, item.file.slice(offset, offset + item.chunkSize), { 'X-Chunk-Offset': String(offset) }, offset);
+          attempt = 0;
+        }
+        checkCancelled(item);
+        await api(`/api/uploads/${item.remoteId}/finish`);
+      }
+      item.retrying = false; renderTransfers();
+      for (;;) {
+        checkCancelled(item);
+        const completion = await api(`/api/uploads/${item.remoteId}`, undefined, 'GET');
+        if (completion.status === 'error') throw Object.assign(new Error(completion.error), { final: true });
+        if (completion.status === 'done') return;
+        await pause(700);
+      }
+    } catch (error) {
+      if (item.status === 'cancelled' || error.final || [401, 403, 404, 507].includes(error.status)) throw error;
+      if (attempt >= 5) throw Object.assign(new Error('Envoi interrompu. « Réessayer » reprend là où il s’est arrêté.'), { resumable: true });
+      item.retrying = true; renderTransfers();
+      await pause(Math.min(1000 * 2 ** attempt, 15000));
+    }
+  }
+}
 async function sendFile(item) {
   if (!state.chunkSize) return xhrUpload(item, '/api/upload', item.file, { 'X-File-Name': encodeURIComponent(item.name), 'X-File-Size': String(item.size) });
-  const upload = await api('/api/uploads', { name: item.name, size: item.size });
-  item.remoteId = upload.id;
+  if (item.remoteId) await api(`/api/uploads/${item.remoteId}`, undefined, 'GET').catch(error => { if (error.status === 404) item.remoteId = null; });
+  if (!item.remoteId) {
+    const upload = await api('/api/uploads', { name: item.name, size: item.size });
+    item.remoteId = upload.id; item.chunkSize = upload.chunkSize; item.bytes = 0;
+  }
+  try { await sendChunks(item); }
+  catch (error) { if (!error.resumable) discardRemote(item); throw error; }
+  discardRemote(item);
+}
+let wakeLock = null, wakeWanted = false;
+async function keepAwake(on) {
+  wakeWanted = on;
+  if (!navigator.wakeLock) return;
   try {
-    for (let offset = 0; offset < item.size; offset += upload.chunkSize) {
-      if (item.status === 'cancelled') throw new Error('Envoi annulé.');
-      await xhrUpload(item, `/api/uploads/${upload.id}`, item.file.slice(offset, offset + upload.chunkSize), { 'X-Chunk-Offset': String(offset) }, offset);
-    }
-    if (item.status === 'cancelled') throw new Error('Envoi annulé.');
-    item.finalController = new AbortController();
-    await api(`/api/uploads/${upload.id}/finish`);
-    for (;;) {
-      if (item.status === 'cancelled') throw new Error('Envoi annulé.');
-      const completion = await api(`/api/uploads/${upload.id}`, undefined, 'GET', 10000, item.finalController.signal);
-      if (completion.status === 'error') throw new Error(completion.error);
-      if (completion.status === 'done') break;
-      await new Promise(resolve => setTimeout(resolve, 700));
-    }
-    await api(`/api/uploads/${upload.id}`, undefined, 'DELETE').catch(() => {});
-  } catch (error) {
-    await api(`/api/uploads/${upload.id}`, undefined, 'DELETE').catch(() => {});
-    throw error;
-  } finally { item.remoteId = null; item.finalController = null; }
+    if (on && !wakeLock && !document.hidden) {
+      wakeLock = 'pending';
+      const lock = await navigator.wakeLock.request('screen');
+      wakeLock = lock; lock.addEventListener('release', () => { if (wakeLock === lock) wakeLock = null; });
+      if (!wakeWanted) await lock.release();
+    } else if (!on && wakeLock && wakeLock !== 'pending') await wakeLock.release();
+  } catch { wakeLock = null; }
 }
 async function processQueue() {
   if (uploading) return;
-  uploading = true;
+  uploading = true; keepAwake(true);
   try {
     for (;;) {
       const item = uploads.find(u => u.status === 'queued'); if (!item) break;
@@ -242,9 +313,9 @@ async function processQueue() {
         toast(state.role === 'admin' ? `${item.name} ajouté au partage.` : `${item.name} reçu sur le PC.`);
       } catch (error) {
         if (item.status !== 'cancelled') { item.status = 'error'; item.error = error.message; toast(error.message, true); }
-      } finally { item.xhr = null; renderTransfers(); await refresh(); }
+      } finally { item.xhr = null; item.retrying = false; renderTransfers(); await refresh(); }
     }
-  } finally { uploading = false; uploads = uploads.filter(u => u.status !== 'done').concat(uploads.filter(u => u.status === 'done').slice(-8)); }
+  } finally { uploading = false; keepAwake(false); uploads = uploads.filter(u => u.status !== 'done').concat(uploads.filter(u => u.status === 'done').slice(-8)); }
 }
 function dialog(title, html) {
   $('#dialog-title').textContent = title; $('#dialog-body').innerHTML = html; $('#dialog').showModal();
@@ -311,9 +382,10 @@ document.addEventListener('click', async event => {
       button.disabled = true; await api(`/api/devices/${button.dataset.decide}`, { approve:button.dataset.approve === 'true' }); await refresh();
       toast(button.dataset.approve === 'true' ? 'Appareil connecté. Vous pouvez partager.' : 'Connexion fermée.');
     }
+    if (button.dataset.share) await shareFile(button);
     if (button.dataset.remove) { await api(`/api/files/${button.dataset.remove}`, undefined, 'DELETE'); await refresh(); toast('Fichier retiré du partage.'); }
-    if (button.dataset.cancel) { const item = uploads.find(u => u.id === button.dataset.cancel); if (item) { item.status = 'cancelled'; item.xhr?.abort(); item.finalController?.abort(); if (item.remoteId) api(`/api/uploads/${item.remoteId}`, undefined, 'DELETE').catch(() => {}); item.file = null; renderTransfers(); } }
-    if (button.dataset.retry) { const item = uploads.find(u => u.id === button.dataset.retry); if (item?.file) { item.status = 'queued'; item.bytes = 0; processQueue(); } }
+    if (button.dataset.cancel) { const item = uploads.find(u => u.id === button.dataset.cancel); if (item) { item.status = 'cancelled'; item.xhr?.abort(); discardRemote(item); item.file = null; renderTransfers(); } }
+    if (button.dataset.retry) { const item = uploads.find(u => u.id === button.dataset.retry); if (item?.file) { item.status = 'queued'; if (!item.remoteId) item.bytes = 0; processQueue(); } }
     switch (button.dataset.action) {
       case 'help': help(); break;
       case 'settings': settings(); break;
@@ -369,7 +441,7 @@ document.addEventListener('drop', event => {
 document.addEventListener('keydown', event => {
   if (['ArrowRight','ArrowLeft'].includes(event.key) && event.target.matches('[data-phone-tab]')) { event.preventDefault(); const tab = event.target.dataset.phoneTab === 'send' ? 'receive' : 'send'; switchPhoneTab(tab); $(`[data-phone-tab="${tab}"]`).focus(); }
 });
-document.addEventListener('visibilitychange', () => { if (!document.hidden && hadSession) refresh(); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden && wakeWanted) keepAwake(true); if (!document.hidden && hadSession) refresh(); });
 window.addEventListener('online', () => { if (hadSession) refresh(); });
 $('#dialog').addEventListener('click', event => { if (event.target === $('#dialog')) { const r = $('#dialog').getBoundingClientRect(); if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) $('#dialog').close(); } });
 $('#qr').addEventListener('error', () => { $('#qr').hidden = true; $('#qr-empty').hidden = false; lastQr = ''; });

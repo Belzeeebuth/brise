@@ -91,7 +91,7 @@ export function createHandler(app, network, { openFolder = () => {}, shutdown = 
         if (path === '/api/state' && method === 'GET') {
           const state = app.state(actor);
           state.connectionMode = publicGateway ? 'internet' : connections?.mode || 'local';
-          state.chunkSize = publicGateway && chunks ? CHUNK_SIZE : null;
+          state.chunkSize = chunks ? CHUNK_SIZE : null;
           if (actor.role === 'admin') {
             app.ensurePairToken();
             const origin = connections ? connections.origin() : network.address ? `http://${network.address}:${network.port}` : null;

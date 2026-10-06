@@ -57,7 +57,7 @@ export class Connections {
   select(mode, options = {}) {
     if (!['local', 'internet', 'hotspot'].includes(mode)) throw new AppError(400, 'Mode inconnu.');
     if (this.job) throw new AppError(409, 'Un changement de mode est en cours.');
-    if (this.app.active.size || this.chunks?.pending) throw new AppError(409, 'Attendez la fin des transferts avant de changer de mode.');
+    if ([...this.app.active.values()].some(t => !t.paused) || this.chunks?.pending) throw new AppError(409, 'Attendez la fin des transferts avant de changer de mode.');
     if (mode === 'hotspot') {
       if (!this.capabilities.hotspot.available) throw new AppError(409, this.capabilities.hotspot.reason);
       if (!options.confirmWifiChange) throw new AppError(409, 'Confirmez le remplacement de la connexion Wi-Fi sur la carte choisie.');

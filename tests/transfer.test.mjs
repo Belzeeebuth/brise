@@ -180,6 +180,10 @@ test('QR contains vector modules and a white quiet zone; filenames and tokens to
   assert.equal(safeName('..\\..\\hello.txt'), 'hello.txt');
   assert.equal(safeName('...'), 'Fichier');
   assert.ok(Buffer.byteLength(safeName('🌿'.repeat(200))) <= 180);
+  const long = safeName(`${'Vidéo de vacances 🌿 '.repeat(20)}.mov`);
+  assert.ok(Buffer.byteLength(long) <= 180); assert.match(long, /^Vidéo de vacances .*\.mov$/); assert.equal(long.isWellFormed(), true);
+  assert.equal(safeName('🌿'.repeat(200)).isWellFormed(), true);
+  const started = Date.now(); safeName('a'.repeat(100000)); assert.ok(Date.now() - started < 500);
   assert.equal(equal('a', 'é'), false);
   assert.equal(equal(undefined, 'test'), false);
 });

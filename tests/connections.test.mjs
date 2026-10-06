@@ -35,7 +35,7 @@ test('chunk upload reconstructs binary bytes and persists the received file', as
   assert.deepEqual(await readFile(file.path), Buffer.concat([first, second]));
   assert.equal(app.active.size, 0); assert.equal(chunks.pending, false);
   await chunks.discard(upload.id); assert.equal(chunks.records.size, 0);
-  assert.deepEqual(await readdir(chunks.dir), []);
+  assert.deepEqual(await readdir(app.partialDir), []);
 });
 
 test('chunks reject wrong offsets, partial blocks and cross-device access', async t => {
@@ -264,5 +264,51 @@ test('a manual address is kept while present; BRISE_ADDRESS is always restored',
   network.fixed = '203.0.113.5'; network.address = '10.42.0.1';
   modes.refreshNetwork();
   assert.equal(network.address, '203.0.113.5');
+  await modes.close();
+});
+
+test('an interrupted chunk upload resumes from the last stored block without a second copy', async t => {
+  const { app, chunks, phone } = await setup(t);
+  const first = Buffer.alloc(CHUNK_SIZE, 1), second = Buffer.alloc(1000, 2);
+  const upload = await chunks.begin(phone, { name: 'video.mov', size: first.length + second.length });
+  await chunks.append(upload.id, phone, 0, stream(first));
+  async function* cut() { yield second.subarray(0, 300); throw new Error('connexion perdue'); }
+  await assert.rejects(chunks.append(upload.id, phone, first.length, Readable.from(cut())));
+  assert.equal(chunks.get(upload.id, phone).bytes, first.length);
+  assert.equal(app.active.get(upload.id).bytes, first.length);
+  await chunks.append(upload.id, phone, first.length, stream(second));
+  chunks.startFinish(upload.id, phone); const r = chunks.get(upload.id, phone); await r.job;
+  assert.equal(r.completion.status, 'done');
+  const file = app.files.get(r.completion.result.id);
+  assert.deepEqual(await readFile(file.path), Buffer.concat([first, second]));
+  assert.deepEqual(await readdir(app.partialDir), []);
+});
+
+test('a new block replaces a stalled request for the same upload', async t => {
+  const { chunks, phone } = await setup(t);
+  const upload = await chunks.begin(phone, { name: 'stalled.txt', size: 4 });
+  const stalled = new PassThrough(); stalled.write('ab');
+  const first = chunks.append(upload.id, phone, 0, stalled).then(() => null, error => error);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal((await chunks.append(upload.id, phone, 0, stream('abcd'))).offset, 4);
+  assert.ok(await first instanceof Error);
+  assert.equal(chunks.get(upload.id, phone).bytes, 4);
+});
+
+test('an abandoned upload is paused: it frees its slot, allows mode changes and is discarded by revocation', async t => {
+  const { app, network, chunks, phone, device } = await setup(t);
+  const modes = await new Connections(app, network, { ...fakeSystem(), chunks }).init();
+  const uploads = [];
+  for (let i = 0; i < 3; i++) uploads.push(await chunks.begin(phone, { name: `f${i}.bin`, size: 10 }));
+  await assert.rejects(chunks.begin(phone, { name: 'extra.bin', size: 10 }), { status: 429 });
+  assert.throws(() => modes.select('internet'), { status: 409 });
+  for (const u of uploads) chunks.records.get(u.id).updatedAt -= 60000;
+  assert.equal(app.uploads, 0); assert.equal(chunks.pending, false);
+  assert.equal(app.state({ role: 'admin' }).transfers[0].paused, true);
+  const extra = await chunks.begin(phone, { name: 'extra.bin', size: 10 });
+  await chunks.discard(extra.id);
+  modes.select('internet'); await modes.job;
+  assert.equal(app.devices.get(device.id).status, 'revoked');
+  assert.equal(chunks.records.size, 0); assert.deepEqual(await readdir(app.partialDir), []);
   await modes.close();
 });

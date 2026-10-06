@@ -18,7 +18,16 @@ export function equal(a, b) {
 export function safeName(value) {
   let name = basename(String(value || 'Fichier').replaceAll('\\', '/'))
     .replace(/[\x00-\x1f\x7f<>:"|?*\u202a-\u202e\u2066-\u2069]/g, '_').replace(/^\.+/, '').trim();
-  while (Buffer.byteLength(name) > 180) name = name.slice(0, -1);
+  if (Buffer.byteLength(name) > 180) {
+    let extension = extname(name);
+    if (Buffer.byteLength(extension) > 24) extension = '';
+    let stem = '';
+    for (const char of name.slice(0, name.length - extension.length)) {
+      if (Buffer.byteLength(stem + char + extension) > 180) break;
+      stem += char;
+    }
+    name = (stem.trim() + extension).replace(/^\.+/, '');
+  }
   return name || 'Fichier';
 }
 
@@ -54,13 +63,13 @@ export class Brise extends EventEmitter {
     this.pairToken = token(); this.expiresAt = this.now() + TOKEN_TTL;
     this.emit('change');
   }
-  get uploads() { return [...this.active.values()].filter(t => t.direction !== 'download').length; }
+  get uploads() { return [...this.active.values()].filter(t => t.direction !== 'download' && !t.paused).length; }
   ensurePairToken() { if (this.now() >= this.expiresAt) this.rotate(); }
   pair(code, name) {
     if (!equal(code, this.pairToken) || this.now() >= this.expiresAt) throw new AppError(403, 'Ce QR code a expiré. Scannez le nouveau code sur le PC.');
     for (const [id, d] of this.devices) if (d.status === 'pending' && this.now() - d.createdAt > TOKEN_TTL) this.devices.delete(id);
     if ([...this.devices.values()].filter(d => ['pending', 'approved'].includes(d.status)).length >= 12) throw new AppError(429, 'Trop de connexions. Fermez une session sur le PC.');
-    const device = { id: randomUUID(), name: safeName(name).slice(0, 48), secret: token(), status: 'pending', createdAt: this.now(), lastSeen: this.now(), code: String(randomBytes(3).readUIntBE(0, 3) % 1000000).padStart(6, '0') };
+    const device = { id: randomUUID(), name: [...safeName(name)].slice(0, 48).join(''), secret: token(), status: 'pending', createdAt: this.now(), lastSeen: this.now(), code: String(randomBytes(3).readUIntBE(0, 3) % 1000000).padStart(6, '0') };
     this.devices.set(device.id, device); this.emit('change');
     return device;
   }
@@ -110,14 +119,14 @@ export class Brise extends EventEmitter {
     });
     this.saveQueue = next; return next;
   }
+  temp(id, outgoing) { return join(outgoing ? this.cacheDir : this.partialDir, `${id}.part`); }
   async upload({ stream, name, size, actor }) {
     this.allowed(actor);
     if (!Number.isSafeInteger(size) || size < 0) throw new AppError(400, 'Taille du fichier invalide.');
     if (size > this.maxFileSize) throw new AppError(413, 'Ce fichier dépasse la limite de 10 Go.');
     if (this.uploads >= 3) throw new AppError(429, 'Trois envois sont déjà en cours. Réessayez dans un instant.');
     const id = randomUUID(); const outgoing = actor.role === 'admin';
-    const dir = outgoing ? this.cacheDir : this.partialDir;
-    const temp = join(dir, `${id}.part`);
+    const temp = this.temp(id, outgoing);
     const controller = new AbortController();
     const item = { id, name: safeName(name), size, bytes: 0, direction: outgoing ? 'outgoing' : 'incoming', ownerId: actor.id, sender: actor.name, startedAt: this.now(), controller };
     this.active.set(id, item); this.emit('change');
@@ -128,31 +137,34 @@ export class Brise extends EventEmitter {
       if (this.now() - lastTick > 250) { this.emit('change'); lastTick = this.now(); }
       done(null, chunk);
     } });
-    let destination;
     try {
       await pipeline(stream, meter, createWriteStream(temp, { flags: 'wx', mode: 0o600 }), { signal: controller.signal });
       if (item.bytes !== size) throw new AppError(400, 'Le transfert a été interrompu. Réessayez.');
-      this.allowed(actor);
-      let diskName = `${id}.bin`;
-      if (outgoing) { destination = join(this.cacheDir, diskName); await rename(temp, destination); }
-      else {
-        const extension = extname(item.name), stem = item.name.slice(0, item.name.length - extension.length);
-        for (let n = 0; ; n++) {
-          diskName = n ? `${stem} (${n})${extension}` : item.name;
-          destination = join(this.receiveDir, diskName);
-          try { await link(temp, destination); break; } catch (e) { if (e.code !== 'EEXIST') throw e; }
-        }
-        await unlink(temp);
-      }
-      const file = { id, name: item.name, size, direction: item.direction, sender: actor.name, createdAt: this.now(), downloads: 0, diskName, path: destination };
-      this.files.set(id, file);
-      await this.save();
-      return { id, name: file.name, size };
+      return await this.store({ id, temp, name: item.name, size, actor });
     } catch (error) {
       await unlink(temp).catch(() => {});
       if (error.code === 'ENOSPC') throw new AppError(507, 'Le disque du PC est plein.');
       throw error;
     } finally { this.active.delete(id); this.emit('change'); }
+  }
+  async store({ id, temp, name, size, actor }) {
+    this.allowed(actor);
+    const outgoing = actor.role === 'admin';
+    let diskName = `${id}.bin`, destination;
+    if (outgoing) { destination = join(this.cacheDir, diskName); await rename(temp, destination); }
+    else {
+      const extension = extname(name), stem = name.slice(0, name.length - extension.length);
+      for (let n = 0; ; n++) {
+        diskName = n ? `${stem} (${n})${extension}` : name;
+        destination = join(this.receiveDir, diskName);
+        try { await link(temp, destination); break; } catch (e) { if (e.code !== 'EEXIST') throw e; }
+      }
+      await unlink(temp).catch(e => { if (e.code !== 'ENOENT') throw e; });
+    }
+    const file = { id, name, size, direction: outgoing ? 'outgoing' : 'incoming', sender: actor.name, createdAt: this.now(), downloads: 0, diskName, path: destination };
+    this.files.set(id, file);
+    await this.save();
+    return { id, name, size };
   }
   async removeShared(id) {
     const f = this.files.get(id);
