@@ -1,0 +1,11 @@
+import { mkdir, writeFile, chmod } from 'node:fs/promises';
+import { join, dirname } from 'node:path';
+import { homedir } from 'node:os';
+import { fileURLToPath } from 'node:url';
+const root = dirname(dirname(fileURLToPath(import.meta.url)));
+const apps = join(process.env.XDG_DATA_HOME || join(homedir(), '.local/share'), 'applications');
+await mkdir(apps, { recursive: true });
+await chmod(join(root, 'brise'), 0o755);
+const quote = value => '"' + value.replace(/["`$\\]/g, '\\$&').replaceAll('%', '%%') + '"';
+await writeFile(join(apps, 'brise.desktop'), `[Desktop Entry]\nType=Application\nName=Brise\nComment=Partagez vos fichiers avec votre téléphone\nExec=${quote(join(root, 'brise'))}\nIcon=${join(root, 'public/icon.svg')}\nTerminal=false\nCategories=Network;FileTransfer;\nKeywords=partage;fichiers;airdrop;QR;téléphone;\nStartupNotify=false\n`);
+console.log('Brise est ajouté au lanceur d’applications.');
