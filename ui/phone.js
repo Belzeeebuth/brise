@@ -3,6 +3,17 @@ let state = null, pairCode = '', polling = false, pollTimer;
 let filesKey = '', hadSession = false, errorCount = 0, firstFiles = true;
 let uploads = [], uploading = false;
 const seenFiles = new Set();
+const darkMedia = matchMedia('(prefers-color-scheme: dark)');
+let lookKey = '';
+function syncLook(view) {
+  if (!view?.id) return;
+  const look = { id: view.id, accent: view.accent || null, image: view.id === 'custom' ? `/wallpapers/custom?v=${view.version || 0}` : null };
+  const key = JSON.stringify(look);
+  if (key === lookKey) return;
+  lookKey = key; applyLook(look, darkMedia.matches);
+  try { localStorage.setItem('brise-look', key); } catch {}
+}
+darkMedia.addEventListener('change', () => { if (lookKey) applyLook(JSON.parse(lookKey), darkMedia.matches); });
 async function api(path, data, method = 'POST', timeout = 10000) {
   let response;
   try { response = await fetch(path, { method, headers: { 'X-Brise':'1', ...(data === undefined ? {} : { 'Content-Type':'application/json' }) }, body: data === undefined ? undefined : JSON.stringify(data), signal: AbortSignal.timeout(timeout) }); }
@@ -65,6 +76,7 @@ function fileRow(file) {
 }
 function updateState(next) {
   state = next; hadSession = true; errorCount = 0;
+  syncLook(next.wallpaper);
   showShell();
   if (next.status === 'pending') {
     screen('waiting-screen'); statusChip(t('device.pending'), 'warn live');
@@ -270,6 +282,7 @@ function defaultName() {
 async function init() {
   const fragment = location.hash.slice(1);
   if (fragment) history.replaceState(null, '', location.pathname);
+  api('/api/look', undefined, 'GET').then(syncLook).catch(() => {});
   try {
     if (location.pathname === '/connect' && fragment) {
       pairCode = fragment; showShell(); screen('pair-screen');

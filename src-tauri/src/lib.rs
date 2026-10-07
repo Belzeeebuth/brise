@@ -3,12 +3,14 @@ pub mod core;
 pub mod i18n;
 pub mod network;
 pub mod server;
+pub mod settings;
 
 use crate::connections::{system_runner, Connections};
 use crate::core::{AppError, Brise, Event};
 use crate::i18n::{system_lang, tr, Lang};
 use crate::network::{hostname, interfaces, qr_svg, valid_address, wifi_payload, Network};
 use crate::server::{gateway_factory, serve, Ctx};
+use crate::settings::Store;
 use serde::ser::{Serialize, Serializer};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -34,6 +36,7 @@ pub struct App {
     pub brise: Arc<Brise>,
     pub network: Arc<Mutex<Network>>,
     pub connections: Arc<Connections>,
+    pub settings: Arc<Store>,
     pub server_error: Mutex<Option<AppError>>,
     pub lang: Lang,
     lock: PathBuf,
@@ -84,17 +87,19 @@ pub async fn start(data_dir: PathBuf, receive_dir: PathBuf) -> Result<Arc<App>, 
     let port = std::env::var("BRISE_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(DEFAULT_PORT);
     let fixed = std::env::var("BRISE_ADDRESS").ok().filter(|a| valid_address(a));
     let network = Arc::new(Mutex::new(Network::new(port, interfaces(), fixed)));
-    let connections = Connections::new(brise.clone(), network.clone(), system_runner(), Some(gateway_factory(brise.clone(), network.clone())), None);
+    let settings = Arc::new(Store::open(&brise.data_dir));
+    let connections = Connections::new(brise.clone(), network.clone(), system_runner(), Some(gateway_factory(brise.clone(), network.clone(), settings.clone())), None);
     let app = Arc::new(App {
         brise: brise.clone(),
         network: network.clone(),
         connections: connections.clone(),
+        settings: settings.clone(),
         server_error: Mutex::new(None),
         lang: system_lang(),
         lock,
         hidden_once: AtomicBool::new(false),
     });
-    let ctx = Arc::new(Ctx { brise: brise.clone(), network: network.clone(), connections: Some(connections.clone()), public: false, gateway_port: AtomicU16::new(0) });
+    let ctx = Arc::new(Ctx { brise: brise.clone(), network: network.clone(), connections: Some(connections.clone()), settings, public: false, gateway_port: AtomicU16::new(0) });
     match serve(ctx, ("0.0.0.0", port)).await {
         Ok((bound, _)) => network.lock().unwrap_or_else(|p| p.into_inner()).port = bound,
         Err(error) => {
@@ -159,7 +164,14 @@ impl App {
             "receiveDir": self.brise.receive_dir,
             "maxFileSize": self.brise.max_file_size,
             "serverError": server_error,
+            "wallpaper": self.wallpaper(),
         })
+    }
+
+    pub fn wallpaper(&self) -> Value {
+        let mut view = self.settings.view();
+        view["customPath"] = json!(self.settings.custom_path());
+        view
     }
 
     pub async fn shutdown(&self) {
@@ -239,6 +251,40 @@ async fn pick_files(handle: AppHandle, app: Shared<'_>) -> Reply<usize> {
     let Some(files) = rx.await.ok().flatten() else { return Ok(0) };
     let paths: Vec<PathBuf> = files.into_iter().filter_map(|f| f.into_path().ok()).collect();
     app.share(&handle, &paths)
+}
+
+#[tauri::command]
+fn set_wallpaper(app: Shared<'_>, id: String) -> Reply<()> {
+    app.settings.set_wallpaper(&id)?;
+    app.brise.notify();
+    Ok(())
+}
+
+#[tauri::command]
+async fn pick_wallpaper(handle: AppHandle, app: Shared<'_>) -> Reply<bool> {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    handle
+        .dialog()
+        .file()
+        .set_title(tr(app.lang, "pick_wallpaper_title"))
+        .add_filter(tr(app.lang, "pick_wallpaper_filter"), &["jpg", "jpeg", "png", "webp"])
+        .pick_file(move |file| {
+            let _ = tx.send(file);
+        });
+    let Some(file) = rx.await.ok().flatten() else { return Ok(false) };
+    let source = file.into_path().map_err(|_| AppError::new(400, "wallpaper_invalid"))?;
+    let settings = app.settings.clone();
+    let target = tauri::async_runtime::spawn_blocking(move || settings.install_custom(&source)).await.map_err(|_| AppError::new(500, "unexpected"))??;
+    let _ = handle.asset_protocol_scope().allow_file(&target);
+    app.brise.notify();
+    Ok(true)
+}
+
+#[tauri::command]
+fn remove_wallpaper(app: Shared<'_>) -> Reply<()> {
+    app.settings.remove_custom()?;
+    app.brise.notify();
+    Ok(())
 }
 
 #[tauri::command]
@@ -350,7 +396,7 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![get_state, qr, wifi_qr, decide, rotate, set_address, select_mode, probe_modes, pick_files, remove_shared, open_folder, reveal_file, open_file, quit])
+        .invoke_handler(tauri::generate_handler![get_state, qr, wifi_qr, decide, rotate, set_address, select_mode, probe_modes, pick_files, remove_shared, open_folder, reveal_file, open_file, set_wallpaper, pick_wallpaper, remove_wallpaper, quit])
         .setup(|tauri_app| {
             let handle = tauri_app.handle().clone();
             let (data_dir, receive_dir) = paths();
@@ -358,6 +404,9 @@ pub fn run() {
             match tauri::async_runtime::block_on(start(data_dir, receive_dir.clone())) {
                 Ok(app) => {
                     let _ = tauri_app.asset_protocol_scope().allow_directory(&receive_dir, true);
+                    if let Some(path) = app.settings.custom_path() {
+                        let _ = tauri_app.asset_protocol_scope().allow_file(&path);
+                    }
                     tauri_app.manage(app.clone());
                     bridge(handle.clone(), app);
                 }

@@ -105,7 +105,7 @@ fn setup() -> Setup {
 
 async fn connections(s: &Setup, fake: Arc<Fake>) -> Arc<Connections> {
     let source = s.interfaces.clone();
-    let c = Connections::new(s.brise.clone(), s.network.clone(), runner(fake), Some(gateway_factory(s.brise.clone(), s.network.clone())), Some(Arc::new(move || source.lock().unwrap().clone())));
+    let c = Connections::new(s.brise.clone(), s.network.clone(), runner(fake), Some(gateway_factory(s.brise.clone(), s.network.clone(), Arc::new(brise_lib::settings::Store::open(&s.brise.data_dir)))), Some(Arc::new(move || source.lock().unwrap().clone())));
     c.init().await;
     c
 }

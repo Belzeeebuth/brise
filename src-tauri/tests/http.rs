@@ -5,6 +5,7 @@ use axum::Router;
 use brise_lib::core::Brise;
 use brise_lib::network::{Iface, Network};
 use brise_lib::server::{router, Ctx};
+use brise_lib::settings::Store;
 use http_body_util::BodyExt;
 use serde_json::{json, Value};
 use std::net::SocketAddr;
@@ -33,7 +34,8 @@ const HOST: &str = "192.168.1.42:53318";
 fn setup(dir: &tempfile::TempDir) -> (Arc<Brise>, Router) {
     let brise = Brise::open(dir.path().join("data"), dir.path().join("received")).unwrap();
     let network = Network::new(53318, vec![Iface { name: "wlan0".into(), address: "192.168.1.42".into() }], None);
-    let ctx = Arc::new(Ctx { brise: brise.clone(), network: Arc::new(Mutex::new(network)), connections: None, public: false, gateway_port: AtomicU16::new(0) });
+    let settings = Arc::new(Store::open(&brise.data_dir));
+    let ctx = Arc::new(Ctx { brise: brise.clone(), network: Arc::new(Mutex::new(network)), connections: None, settings, public: false, gateway_port: AtomicU16::new(0) });
     (brise, router(ctx))
 }
 
@@ -159,4 +161,23 @@ async fn a_stalled_download_is_released_by_the_sweep() {
     assert!(brise.desktop_view().transfers.is_empty());
     let received = response.into_body().collect().await.map(|b| b.to_bytes().len()).unwrap_or(0);
     assert!(received < 4 * 1024 * 1024);
+}
+
+#[tokio::test]
+async fn wallpapers_are_served_and_the_look_is_public() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_brise, app) = setup(&dir);
+    let svg = send(&app, "GET", "/wallpapers/brume-dark.svg", &[], "").await;
+    assert_eq!(svg.status, StatusCode::OK);
+    assert_eq!(svg.headers["content-type"], "image/svg+xml");
+    assert!(svg.body.starts_with(b"<svg"));
+    let grain = send(&app, "GET", "/wallpapers/grain.png", &[], "").await;
+    assert_eq!(grain.headers["content-type"], "image/png");
+    assert_eq!(send(&app, "GET", "/wallpapers/custom", &[], "").await.status, StatusCode::NOT_FOUND);
+    assert_eq!(send(&app, "GET", "/wallpapers/settings.json", &[], "").await.status, StatusCode::NOT_FOUND);
+    assert_eq!(send(&app, "GET", "/theme.js", &[], "").await.headers["content-type"], "text/javascript; charset=utf-8");
+    let look = send(&app, "GET", "/api/look", &[], "").await;
+    assert_eq!(look.status, StatusCode::OK);
+    assert_eq!(look.json()["id"], "brume");
+    assert!(look.json()["accent"].is_null());
 }

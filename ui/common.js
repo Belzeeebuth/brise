@@ -36,6 +36,8 @@ const ICONS = {
   terminal: 'm4 17 6-6-6-6M12 19h8',
   scan: 'M3 7V5a2 2 0 0 1 2-2h2M17 3h2a2 2 0 0 1 2 2v2M21 17v2a2 2 0 0 1-2 2h-2M7 21H5a2 2 0 0 1-2-2v-2M7 12h10',
   palette: 'M12 22a10 10 0 1 1 10-10c0 2.5-2 3.5-4 3.5h-2.5a2 2 0 0 0-1.5 3.3c.6.7.4 3.2-2 3.2zM7.5 10.5h.01M10.5 7h.01M15 7.5h.01M17 11h.01',
+  picture: 'M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zM3 16l5-5 4 4 3-3 6 6',
+  trash: 'M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6',
   info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 16v-4M12 8h.01',
 };
 const icon = (name, extra = '') => `<svg class="icon ${extra}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] || ICONS.file}"/></svg>`;
@@ -92,8 +94,11 @@ function closeDialog() { if ($('#dialog').open) $('#dialog').close(); }
 function emptyState(glyph, title, text) {
   return `<div class="empty"><span class="empty-art">${icon(glyph)}</span><strong>${escape(title)}</strong><p>${escape(text)}</p></div>`;
 }
-function breezeLines() {
-  return `<svg class="breeze" viewBox="0 0 1200 400" preserveAspectRatio="none" aria-hidden="true"><path d="M-60 250 C 140 170, 300 330, 520 250 S 880 140, 1260 230"/><path d="M-60 300 C 180 230, 360 360, 600 290 S 940 210, 1260 300"/><path d="M-60 180 C 200 120, 380 240, 640 170 S 1000 90, 1260 160"/></svg>`;
+const mark = () => '<svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 25.5H39a6.5 6.5 0 1 0-6.5-6.5"/><path d="M49.5 38.5H25a6.5 6.5 0 1 0 6.5 6.5"/></g></svg>';
+function wallpaperImage(look, dark) {
+  if (!look) return '';
+  if (look.id === 'custom') return look.image || '';
+  return WALLPAPERS[look.id] ? `wallpapers/${look.id}-${dark ? 'dark' : 'light'}.svg` : '';
 }
 document.addEventListener('click', event => {
   if (event.target.closest('[data-close]')) closeDialog();

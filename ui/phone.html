@@ -4,10 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#eef5f7" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#071116" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#e3e1db" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#16181c" media="(prefers-color-scheme: dark)">
   <title>Brise</title>
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <script src="/theme.js"></script>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/phone.css">
   <script src="/i18n.js" defer></script>
@@ -15,18 +16,18 @@
   <script src="/phone.js" defer></script>
 </head>
 <body class="phone">
-  <div id="boot" class="boot"><img src="/icon.svg" alt=""><span class="spinner"></span></div>
+  <div class="wall" aria-hidden="true"></div>
+  <div id="boot" class="boot"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 25.5H39a6.5 6.5 0 1 0-6.5-6.5"/><path d="M49.5 38.5H25a6.5 6.5 0 1 0 6.5 6.5"/></g></svg><span class="spinner"></span></div>
   <div id="shell" hidden>
     <header class="phone-top">
-      <span class="brand"><img src="/icon.svg" alt=""><span>Brise</span></span>
+      <span class="brand"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 25.5H39a6.5 6.5 0 1 0-6.5-6.5"/><path d="M49.5 38.5H25a6.5 6.5 0 1 0 6.5 6.5"/></g></svg><span>Brise</span></span>
       <span id="status-chip" class="chip status-chip" hidden><span class="dot"></span><span id="status-text"></span></span>
       <button class="icon-button" data-action="help" data-i18n-label="action.help" data-i18n-title="action.help"><span data-icon="help"></span></button>
     </header>
     <main class="phone-main">
       <section id="pair-screen" class="screen pair-layout" hidden>
         <div class="hero card">
-          <svg class="breeze" viewBox="0 0 1200 400" preserveAspectRatio="none" aria-hidden="true"><path d="M-60 250 C 140 170, 300 330, 520 250 S 880 140, 1260 230"/><path d="M-60 300 C 180 230, 360 360, 600 290 S 940 210, 1260 300"/><path d="M-60 180 C 200 120, 380 240, 640 170 S 1000 90, 1260 160"/></svg>
-          <img class="hero-logo" src="/icon.svg" alt="">
+          <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 25.5H39a6.5 6.5 0 1 0-6.5-6.5"/><path d="M49.5 38.5H25a6.5 6.5 0 1 0 6.5 6.5"/></g></svg>
           <h1 data-i18n="phone.pair.title"></h1>
           <p data-i18n="phone.pair.hero"></p>
         </div>
@@ -36,7 +37,7 @@
           <button class="button primary large block" type="submit"><span data-i18n="phone.pair.submit"></span></button>
         </form>
       </section>
-      <section id="waiting-screen" class="screen wait" hidden>
+      <section id="waiting-screen" class="screen wait card" hidden>
         <span class="wait-ring"><span data-icon="laptop"></span></span>
         <h1 data-i18n="phone.wait.title"></h1>
         <p data-i18n="phone.wait.text"></p>
@@ -55,7 +56,7 @@
           <div id="file-list" class="rows"></div>
         </div>
       </section>
-      <section id="error-screen" class="screen wait" hidden>
+      <section id="error-screen" class="screen wait card" hidden>
         <span class="wait-ring error"><span data-icon="alert"></span></span>
         <h1 data-i18n="phone.error.title"></h1>
         <p id="error-text"></p>

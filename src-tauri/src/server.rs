@@ -1,6 +1,7 @@
 use crate::connections::{BoxFuture, Connections, Gateway, GatewayFactory};
 use crate::core::{AppError, Brise, Device, Direction, CHUNK_SIZE, IDLE_TIMEOUT};
 use crate::network::Network;
+use crate::settings::Store;
 use axum::body::Body;
 use axum::extract::{ConnectInfo, Path, Request, State};
 use axum::http::{header, HeaderMap, HeaderValue, Method, StatusCode};
@@ -24,9 +25,29 @@ const PHONE_CSS: &str = include_str!("../../ui/phone.css");
 const COMMON_JS: &str = include_str!("../../ui/common.js");
 const I18N_JS: &str = include_str!("../../ui/i18n.js");
 const STYLES: &str = include_str!("../../ui/styles.css");
+const THEME_JS: &str = include_str!("../../ui/theme.js");
 const ICON: &str = include_str!("../../ui/icon.svg");
 const FONT_LATIN: &[u8] = include_bytes!("../../ui/fonts/manrope-latin.woff2");
 const FONT_LATIN_EXT: &[u8] = include_bytes!("../../ui/fonts/manrope-latin-ext.woff2");
+const WALLPAPER_FILES: &[(&str, &[u8])] = &[
+    ("grain.png", include_bytes!("../../ui/wallpapers/grain.png")),
+    ("brume-light.svg", include_bytes!("../../ui/wallpapers/brume-light.svg")),
+    ("brume-dark.svg", include_bytes!("../../ui/wallpapers/brume-dark.svg")),
+    ("dunes-light.svg", include_bytes!("../../ui/wallpapers/dunes-light.svg")),
+    ("dunes-dark.svg", include_bytes!("../../ui/wallpapers/dunes-dark.svg")),
+    ("maree-light.svg", include_bytes!("../../ui/wallpapers/maree-light.svg")),
+    ("maree-dark.svg", include_bytes!("../../ui/wallpapers/maree-dark.svg")),
+    ("nuit-light.svg", include_bytes!("../../ui/wallpapers/nuit-light.svg")),
+    ("nuit-dark.svg", include_bytes!("../../ui/wallpapers/nuit-dark.svg")),
+    ("aurore-light.svg", include_bytes!("../../ui/wallpapers/aurore-light.svg")),
+    ("aurore-dark.svg", include_bytes!("../../ui/wallpapers/aurore-dark.svg")),
+    ("prairie-light.svg", include_bytes!("../../ui/wallpapers/prairie-light.svg")),
+    ("prairie-dark.svg", include_bytes!("../../ui/wallpapers/prairie-dark.svg")),
+    ("papier-light.svg", include_bytes!("../../ui/wallpapers/papier-light.svg")),
+    ("papier-dark.svg", include_bytes!("../../ui/wallpapers/papier-dark.svg")),
+    ("carreaux-light.svg", include_bytes!("../../ui/wallpapers/carreaux-light.svg")),
+    ("carreaux-dark.svg", include_bytes!("../../ui/wallpapers/carreaux-dark.svg")),
+];
 
 const ATTR: &AsciiSet = &NON_ALPHANUMERIC.remove(b'!').remove(b'#').remove(b'$').remove(b'&').remove(b'+').remove(b'-').remove(b'.').remove(b'^').remove(b'_').remove(b'`').remove(b'|').remove(b'~');
 
@@ -41,6 +62,7 @@ pub struct Ctx {
     pub brise: Arc<Brise>,
     pub network: Arc<Mutex<Network>>,
     pub connections: Option<Arc<Connections>>,
+    pub settings: Arc<Store>,
     pub public: bool,
     pub gateway_port: AtomicU16,
 }
@@ -55,11 +77,14 @@ pub fn router(ctx: Arc<Ctx>) -> Router {
         .route("/phone.js", get(|| async { asset(PHONE_JS, "text/javascript; charset=utf-8") }))
         .route("/common.js", get(|| async { asset(COMMON_JS, "text/javascript; charset=utf-8") }))
         .route("/i18n.js", get(|| async { asset(I18N_JS, "text/javascript; charset=utf-8") }))
+        .route("/theme.js", get(|| async { asset(THEME_JS, "text/javascript; charset=utf-8") }))
         .route("/styles.css", get(|| async { asset(STYLES, "text/css; charset=utf-8") }))
         .route("/phone.css", get(|| async { asset(PHONE_CSS, "text/css; charset=utf-8") }))
         .route("/icon.svg", get(|| async { asset(ICON, "image/svg+xml") }))
         .route("/fonts/manrope-latin.woff2", get(|| async { font(FONT_LATIN) }))
         .route("/fonts/manrope-latin-ext.woff2", get(|| async { font(FONT_LATIN_EXT) }))
+        .route("/wallpapers/{name}", get(wallpaper))
+        .route("/api/look", get(look))
         .route("/api/pair", post(pair))
         .route("/api/state", get(phone_state))
         .route("/api/uploads", post(begin_upload))
@@ -81,6 +106,27 @@ fn font(content: &'static [u8]) -> Response {
 
 async fn page() -> Response {
     asset(PHONE_HTML, "text/html; charset=utf-8")
+}
+
+async fn wallpaper(State(ctx): Shared, Path(name): Path<String>) -> Result<Response> {
+    let missing = || AppError::new(404, "not_found");
+    if name == "custom" {
+        let path = ctx.settings.custom_path().ok_or_else(missing)?;
+        let bytes = tokio::fs::read(&path).await.map_err(|_| missing())?;
+        let kind = match path.extension().and_then(|e| e.to_str()) {
+            Some("png") => "image/png",
+            Some("webp") => "image/webp",
+            _ => "image/jpeg",
+        };
+        return Ok(([(header::CONTENT_TYPE, kind)], bytes).into_response());
+    }
+    let (_, bytes) = WALLPAPER_FILES.iter().find(|(file, _)| *file == name).ok_or_else(missing)?;
+    let kind = if name.ends_with(".png") { "image/png" } else { "image/svg+xml" };
+    Ok(([(header::CONTENT_TYPE, kind)], *bytes).into_response())
+}
+
+async fn look(State(ctx): Shared) -> Json<Value> {
+    Json(ctx.settings.view())
 }
 
 fn secure_headers(headers: &mut HeaderMap) {
@@ -173,6 +219,7 @@ async fn phone_state(State(ctx): Shared, headers: HeaderMap) -> Result<Json<Valu
     state["connectionMode"] = json!(if ctx.public { "internet".into() } else { ctx.connections.as_ref().map(|c| json!(c.mode())).unwrap_or(json!("local")) });
     state["chunkSize"] = json!(CHUNK_SIZE);
     state["pc"] = json!(crate::network::hostname());
+    state["wallpaper"] = ctx.settings.view();
     Ok(Json(state))
 }
 
@@ -307,9 +354,9 @@ pub async fn serve(ctx: Arc<Ctx>, address: (&str, u16)) -> std::io::Result<(u16,
     Ok((port, handle))
 }
 
-pub fn gateway_factory(brise: Arc<Brise>, network: Arc<Mutex<Network>>) -> GatewayFactory {
+pub fn gateway_factory(brise: Arc<Brise>, network: Arc<Mutex<Network>>, settings: Arc<Store>) -> GatewayFactory {
     Arc::new(move |connections: Arc<Connections>| -> BoxFuture<std::io::Result<Gateway>> {
-        let ctx = Arc::new(Ctx { brise: brise.clone(), network: network.clone(), connections: Some(connections), public: true, gateway_port: AtomicU16::new(0) });
+        let ctx = Arc::new(Ctx { brise: brise.clone(), network: network.clone(), connections: Some(connections), settings: settings.clone(), public: true, gateway_port: AtomicU16::new(0) });
         Box::pin(async move {
             let (port, handle) = serve(ctx, ("127.0.0.1", 0)).await?;
             Ok(Gateway { port, handle })

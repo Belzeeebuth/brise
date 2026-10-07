@@ -10,7 +10,7 @@ let lastPairId = null, modeDraft = null, dialogKind = null;
 const keys = {};
 const seen = { shared: new Set(), received: new Set(), devices: new Set() };
 const qrCache = { pair: { key: '', src: '' }, wifi: { key: '', src: '' } };
-let approvedBefore = null;
+let approvedBefore = null, lookKey = '', settingsPane = 'appearance';
 
 async function call(command, args) {
   try { return await invoke(command, args); }
@@ -30,6 +30,24 @@ function fresh(set, id) {
 function applyTheme() {
   const dark = themeChoice === 'dark' || (themeChoice === 'system' && systemDark);
   document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  const look = currentLook();
+  if (look) applyLook(look, dark);
+  if (dialogKind === 'settings') renderSettingsPane();
+}
+function customImage() {
+  const w = state?.wallpaper;
+  return w?.customPath ? `${assetUrl(w.customPath)}?v=${w.version || 0}` : '';
+}
+function currentLook() {
+  const w = state?.wallpaper;
+  return w ? { id: w.id, accent: w.accent || null, image: w.id === 'custom' ? customImage() : null } : null;
+}
+function syncLook() {
+  const look = currentLook(), key = JSON.stringify(look);
+  if (!look || key === lookKey) return;
+  lookKey = key;
+  applyLook(look, document.documentElement.dataset.theme === 'dark');
+  try { localStorage.setItem('brise-look', key); } catch {}
 }
 async function setThemeChoice(choice) {
   themeChoice = choice;
@@ -83,7 +101,7 @@ function heroConnect(dialog = false) {
   const twoCodes = c.mode === 'hotspot' && c.hotspot && ready;
   const steps = twoCodes ? [t('connect.hotspot.step1'), t('connect.hotspot.step2'), t('connect.step3')] : [t('connect.step1'), t('connect.step2'), t('connect.step3')];
   const meta = ready ? `<div class="qr-meta"><span>${escape(t(`connect.need.${c.mode}`))}</span><button class="icon-button small" data-action="rotate" title="${escape(t('action.new_code'))}" aria-label="${escape(t('action.new_code'))}">${icon('refresh')}</button></div>` : '';
-  return `${dialog ? '' : breezeLines()}<div class="connect-inner${twoCodes ? ' two-qr' : ''}"><div class="connect-copy"><h1 id="connect-title">${escape(t('connect.title'))}</h1><p class="lead">${escape(t('connect.lead'))}</p><ol class="steps">${steps.map(step => `<li>${escape(step)}</li>`).join('')}</ol><div class="connect-actions">${ready ? `<button class="button primary" data-action="copy-link">${icon('link')}${escape(t('action.copy_link'))}</button>` : ''}<button class="link-button" data-action="modes">${icon(c.mode)}${escape(t('action.change_mode'))}</button></div></div><div class="qr-zone">${qrBlock()}${meta}</div></div>`;
+  return `<div class="connect-inner${twoCodes ? ' two-qr' : ''}"><div class="connect-copy"><h1 id="connect-title">${escape(t('connect.title'))}</h1><p class="lead">${escape(t('connect.lead'))}</p><ol class="steps">${steps.map(step => `<li>${escape(step)}</li>`).join('')}</ol><div class="connect-actions">${ready ? `<button class="button primary" data-action="copy-link">${icon('link')}${escape(t('action.copy_link'))}</button>` : ''}<button class="link-button" data-action="modes">${icon(c.mode)}${escape(t('action.change_mode'))}</button></div></div><div class="qr-zone">${qrBlock()}${meta}</div></div>`;
 }
 function miniConnect() {
   const ready = connectStatus().status === 'ready' && state.pairUrl;
@@ -211,6 +229,7 @@ function updateState(next) {
   state = next;
   if (langChanged) for (const key of Object.keys(keys)) delete keys[key];
   $('#boot').hidden = true; $('#app').hidden = false;
+  syncLook();
   const approved = approvedDevices();
   $('#app').dataset.view = approved.length ? 'share' : 'connect';
   renderTopbar(approved);
@@ -266,18 +285,47 @@ function modesDialog(selected) {
   const failure = c.status === 'error' && c.message ? `<div class="note error">${icon('alert')}<span>${escape(errorText(c.message))}</span></div>` : '';
   show('modes', t('mode.title'), `${failure}<div class="mode-cards">${cards}</div>${modeDetails(modeDraft)}`);
 }
-function settingsDialog() {
-  const n = state.network, local = state.connection.mode === 'local';
-  const themeButtons = [['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([choice, glyph]) => `<button data-theme-choice="${choice}" aria-pressed="${themeChoice === choice}">${icon(glyph)}${escape(t(`theme.${choice}`))}</button>`).join('');
-  const network = local
-    ? `<form id="network-form" class="field">${n.interfaces.length > 1 ? `<span class="select-wrap"><select id="network-select" class="input" aria-label="${escape(t('settings.interface'))}">${n.interfaces.map(i => `<option value="${escape(i.address)}" ${i.address === n.address ? 'selected' : ''}>${escape(i.name)} · ${escape(i.address)}</option>`).join('')}</select>${icon('chevron')}</span>` : ''}<span class="inline"><input id="network-address" class="input" inputmode="decimal" aria-label="${escape(t('settings.address'))}" value="${escape(n.address || '')}" placeholder="192.168.1.42" required><button class="button secondary" type="submit">${escape(t('action.apply'))}</button></span></form>`
-    : `<div class="note">${icon('info')}<span>${escape(t('settings.local_only'))}</span></div>`;
-  show('settings', t('settings.title'), `
-    <div class="section"><span class="section-title">${icon('palette')}${escape(t('settings.appearance'))}</span><div class="segmented" role="group" aria-label="${escape(t('settings.appearance'))}">${themeButtons}</div></div>
-    <div class="section"><span class="section-title">${icon('folder')}${escape(t('settings.receive'))}</span><p>${escape(t('settings.receive_text'))}</p><div class="path">${escape(state.receiveDir)}</div><div><button class="button secondary small" data-action="folder">${icon('folder')}${escape(t('inbox.open_folder'))}</button></div></div>
-    <div class="section"><span class="section-title">${icon('local')}${escape(t('settings.network'))}</span><p>${escape(t('settings.network_text'))}</p>${network}<p class="hint">${icon('info')}<span>${escape(t('settings.port_note', { port: n.port }))}</span></p></div>
-    <div class="section"><div class="about"><img src="icon.svg" alt=""><div><strong>${escape(t('settings.version', { version: state.version }))}</strong><p>${escape(t('settings.about_text'))}</p></div></div></div>
-    <div class="section"><span class="section-title">${icon('power')}${escape(t('settings.quit'))}</span><p>${escape(t('settings.quit_text'))}</p><div><button class="button danger" data-action="quit-confirm">${icon('power')}${escape(t('settings.quit_button'))}</button></div></div>`);
+function settingsDialog(pane) {
+  if (pane) settingsPane = pane;
+  const nav = [['appearance', 'palette'], ['files', 'folder'], ['network', 'local'], ['about', 'info']].map(([key, glyph]) => `<button data-pane="${key}" aria-pressed="${settingsPane === key}">${icon(glyph)}${escape(t(`settings.nav.${key}`))}</button>`).join('');
+  show('settings', t('settings.title'), `<div class="settings"><nav class="settings-nav" aria-label="${escape(t('settings.title'))}">${nav}</nav><div id="settings-pane" class="settings-pane">${settingsPaneHtml()}</div></div>`, { wide: true });
+}
+function wallpaperTile(id, thumb, label) {
+  const selected = state.wallpaper.id === id;
+  return `<button class="wall-tile" data-wallpaper="${id}" aria-pressed="${selected}"><span class="wall-thumb${thumb.cls || ''}">${thumb.html || ''}</span><span>${selected ? `<span class="check">${icon('check')}</span>` : ''}${escape(label)}</span></button>`;
+}
+function settingsPaneHtml() {
+  const n = state.network, w = state.wallpaper;
+  switch (settingsPane) {
+    case 'appearance': {
+      const dark = document.documentElement.dataset.theme === 'dark';
+      const themeButtons = [['system', 'monitor'], ['light', 'sun'], ['dark', 'moon']].map(([choice, glyph]) => `<button data-theme-choice="${choice}" aria-pressed="${themeChoice === choice}">${icon(glyph)}${escape(t(`theme.${choice}`))}</button>`).join('');
+      const tiles = [wallpaperTile('none', { cls: ' swatch' }, t('wallpaper.none'))]
+        .concat(Object.keys(WALLPAPERS).map(id => wallpaperTile(id, { html: `<img src="wallpapers/${id}-${dark ? 'dark' : 'light'}.svg" alt="" loading="lazy">` }, t(`wallpaper.${id}`))));
+      if (w.customPath) tiles.push(wallpaperTile('custom', { html: `<img src="${escape(customImage())}" alt="">` }, t('wallpaper.custom')));
+      tiles.push(`<button class="wall-tile" data-action="pick-wallpaper"><span class="wall-thumb add">${icon('plus')}</span><span>${escape(t('wallpaper.pick'))}</span></button>`);
+      return `<div class="setting"><span class="label">${escape(t('settings.theme'))}</span><div class="segmented" role="group" aria-label="${escape(t('settings.theme'))}">${themeButtons}</div></div>
+        <div class="setting"><span class="label">${escape(t('settings.wallpaper'))}</span><div class="wall-grid">${tiles.join('')}</div><p>${escape(t('settings.wallpaper_text'))}</p>${w.customPath ? `<div><button class="button ghost small" data-action="remove-wallpaper">${icon('trash')}${escape(t('wallpaper.remove'))}</button></div>` : ''}</div>`;
+    }
+    case 'files':
+      return `<div class="setting"><h3>${escape(t('settings.receive'))}</h3><p>${escape(t('settings.receive_text'))}</p><div class="path">${escape(state.receiveDir)}</div><div><button class="button secondary small" data-action="folder">${icon('folder')}${escape(t('inbox.open_folder'))}</button></div></div>`;
+    case 'network': {
+      const local = state.connection.mode === 'local';
+      const form = local
+        ? `<form id="network-form" class="field">${n.interfaces.length > 1 ? `<span class="select-wrap"><select id="network-select" class="input" aria-label="${escape(t('settings.interface'))}">${n.interfaces.map(i => `<option value="${escape(i.address)}" ${i.address === n.address ? 'selected' : ''}>${escape(i.name)} · ${escape(i.address)}</option>`).join('')}</select>${icon('chevron')}</span>` : ''}<span class="inline"><input id="network-address" class="input" inputmode="decimal" aria-label="${escape(t('settings.address'))}" value="${escape(n.address || '')}" placeholder="192.168.1.42" required><button class="button secondary" type="submit">${escape(t('action.apply'))}</button></span></form>`
+        : `<div class="note">${icon('info')}<span>${escape(t('settings.local_only'))}</span></div>`;
+      return `<div class="setting"><h3>${escape(t('settings.network'))}</h3><p>${escape(t('settings.network_text'))}</p>${form}<p class="hint">${icon('info')}<span>${escape(t('settings.port_note', { port: n.port }))}</span></p></div>`;
+    }
+    default:
+      return `<div class="about"><img src="icon.svg" alt=""><div><strong>${escape(t('settings.version', { version: state.version }))}</strong><p>${escape(t('settings.about_text'))}</p></div></div>
+        <div class="setting"><h3>${escape(t('settings.quit'))}</h3><p>${escape(t('settings.quit_text'))}</p><div><button class="button danger" data-action="quit-confirm">${icon('power')}${escape(t('settings.quit_button'))}</button></div></div>`;
+  }
+}
+function renderSettingsPane() {
+  const pane = $('#settings-pane');
+  if (!pane) return;
+  pane.innerHTML = settingsPaneHtml();
+  $$('[data-pane]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.pane === settingsPane)));
 }
 function helpDialog() {
   const card = (glyph, key) => `<div class="help-card"><h3>${icon(glyph)}${escape(t(`help.${key}.title`))}</h3><p>${escape(t(`help.${key}.text`))}</p></div>`;
@@ -311,6 +359,8 @@ document.addEventListener('click', async event => {
     if (el.dataset.open) { await call('open_file', { id: el.dataset.open }); return; }
     if (el.dataset.reveal) { await call('reveal_file', { id: el.dataset.reveal }); return; }
     if (el.dataset.themeChoice) { await setThemeChoice(el.dataset.themeChoice); $$('[data-theme-choice]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeChoice === themeChoice))); return; }
+    if (el.dataset.pane) { settingsPane = el.dataset.pane; renderSettingsPane(); return; }
+    if (el.dataset.wallpaper) { await call('set_wallpaper', { id: el.dataset.wallpaper }); await refresh(); renderSettingsPane(); return; }
     if (el.dataset.modeCard) { modesDialog(el.dataset.modeCard); return; }
     if (el.id === 'dropzone') { await pickFiles(); return; }
     switch (el.dataset.action) {
@@ -322,6 +372,8 @@ document.addEventListener('click', async event => {
       case 'copy-link': await copyLink(); break;
       case 'rotate': el.disabled = true; await call('rotate'); await refresh(); break;
       case 'folder': await call('open_folder'); break;
+      case 'pick-wallpaper': el.disabled = true; if (await call('pick_wallpaper')) { await refresh(); renderSettingsPane(); } break;
+      case 'remove-wallpaper': await call('remove_wallpaper'); await refresh(); renderSettingsPane(); break;
       case 'probe': el.disabled = true; await call('probe_modes'); await refresh(); modesDialog(el.dataset.mode); break;
       case 'activate': {
         const mode = el.dataset.mode;

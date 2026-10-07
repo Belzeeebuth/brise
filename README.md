@@ -16,6 +16,10 @@ un QR code suffit.
 - Interface en français et en anglais, selon la langue du système (et celle du
   navigateur côté téléphone) ; thème clair, sombre ou celui du système, au choix
   dans les réglages.
+- Huit fonds d’écran dessinés pour Brise (brume, dunes, marée, nuit, aurore,
+  prairie, papier, carreaux), chacun en version jour et nuit, ou votre propre
+  image : la couleur d’accent de l’interface suit le fond, et le téléphone
+  reprend le fond choisi sur le PC.
 - Miniatures des photos reçues et partagées, ouverture directe des fichiers reçus.
 
 ## Installer
@@ -123,7 +127,7 @@ l’interface et le réseau à votre machine.
 | `BRISE_PORT` | Port d’écoute, par défaut `53318` |
 | `BRISE_ADDRESS` | Adresse IPv4 fixe à encoder dans le QR (sinon suivie automatiquement) |
 | `BRISE_RECEIVE_DIR` | Dossier de réception |
-| `BRISE_DATA_DIR` | Historique et état (`~/.local/share/brise` par défaut) |
+| `BRISE_DATA_DIR` | Historique, réglages et image de fond (`~/.local/share/brise` par défaut) |
 
 ## Développement
 
@@ -141,11 +145,15 @@ Organisation :
 - `lib.rs` : fenêtre, icône de la barre système, notifications et commandes de
   l’interface ;
 - `i18n.rs` : langue du système et textes natifs (menu de l’icône, notifications) ;
+- `settings.rs` : réglages persistants (`settings.json`), image de fond
+  personnelle et calcul de sa couleur d’accent ;
 - `ui/` : interface du PC (`index.html`, `desktop.js`, `desktop.css`) et du
   téléphone (`phone.html`, `phone.js`, `phone.css`). En commun : `styles.css`
   (thèmes et composants), `common.js`, `i18n.js` (textes français et anglais,
-  y compris les codes d’erreur renvoyés par le moteur) et la police Manrope
-  (`ui/fonts`, licence SIL OFL).
+  y compris les codes d’erreur renvoyés par le moteur), `theme.js` (thème et
+  fond appliqués avant le premier rendu), la police Manrope (`ui/fonts`, licence
+  SIL OFL) et les fonds d’écran (`ui/wallpapers`, SVG produits par
+  `scripts/wallpapers.py`, à relancer après toute retouche).
 
 `src-tauri/examples/e2e_server.rs` lance le serveur seul et accepte
 automatiquement les téléphones, pour tester la page du téléphone dans un

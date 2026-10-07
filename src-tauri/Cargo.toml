@@ -1,6 +1,6 @@
 [package]
 name = "brise"
-version = "0.3.1"
+version = "0.4.0"
 description = "Partagez vos fichiers entre votre PC et votre téléphone"
 authors = ["ana"]
 edition = "2021"
@@ -34,6 +34,7 @@ if-addrs = "0.15"
 subtle = "2"
 percent-encoding = "2"
 dirs = "6"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }

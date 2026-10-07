@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="fr">
+<html lang="fr" data-app="desktop">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -12,13 +12,14 @@
   <script src="desktop.js" defer></script>
 </head>
 <body class="desktop">
-  <div id="boot" class="boot"><img src="icon.svg" alt=""><span class="spinner"></span></div>
+  <div class="wall" aria-hidden="true"></div>
+  <div id="boot" class="boot"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 25.5H39a6.5 6.5 0 1 0-6.5-6.5"/><path d="M49.5 38.5H25a6.5 6.5 0 1 0 6.5 6.5"/></g></svg><span class="spinner"></span></div>
   <div id="app" class="app" data-view="connect" hidden>
     <header class="topbar">
-      <div class="brand"><img src="icon.svg" alt=""><span>Brise</span></div>
+      <div class="brand"><svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 25.5H39a6.5 6.5 0 1 0-6.5-6.5"/><path d="M49.5 38.5H25a6.5 6.5 0 1 0 6.5 6.5"/></g></svg><span>Brise</span></div>
       <div id="device-chips" class="device-chips"></div>
       <div class="topbar-actions">
-        <button id="add-device" class="button secondary small" data-action="connect-dialog" hidden><span data-icon="plus"></span><span data-i18n="devices.add"></span></button>
+        <button id="add-device" class="button ghost small" data-action="connect-dialog" hidden><span data-icon="plus"></span><span data-i18n="devices.add"></span></button>
         <button id="mode-chip" class="chip mode-chip" data-action="modes"><span class="dot"></span><span class="mode-label"></span><svg class="icon chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
         <button class="icon-button" data-action="settings" data-i18n-title="action.settings" data-i18n-label="action.settings"><span data-icon="settings"></span></button>
         <button class="icon-button" data-action="help" data-i18n-title="action.help" data-i18n-label="action.help"><span data-icon="help"></span></button>
@@ -28,13 +29,13 @@
       <section id="connect-panel" class="panel card connect" aria-labelledby="connect-title"></section>
       <section id="send-panel" class="panel card send">
         <div class="panel-head">
-          <div><h2 id="send-title"></h2><p data-i18n="send.subtitle"></p></div>
+          <h2 id="send-title"></h2>
         </div>
         <div class="panel-body">
           <button id="dropzone" class="dropzone" type="button">
             <span class="drop-icon"><span data-icon="upload"></span></span>
             <span class="drop-copy"><strong data-i18n="send.drop"></strong><span data-i18n="send.drop_hint"></span></span>
-            <span class="button secondary"><span data-i18n="action.browse"></span></span>
+            <span class="button secondary small"><span data-i18n="action.browse"></span></span>
           </button>
           <div id="shared-list" class="rows"></div>
         </div>
@@ -44,7 +45,7 @@
           <h2><span data-i18n="inbox.title"></span><span id="inbox-count" class="count" hidden></span></h2>
           <button class="button ghost small" data-action="folder"><span data-icon="folder"></span><span data-i18n="inbox.open_folder"></span></button>
         </div>
-        <div id="inbox-list" class="panel-body"></div>
+        <div id="inbox-list" class="panel-body rows"></div>
       </section>
       <aside id="rail" class="panel card rail">
         <div class="panel-head"><h2 data-i18n="devices.title"></h2></div>
@@ -54,7 +55,6 @@
   </div>
   <div class="drop-overlay" aria-hidden="true">
     <div class="drop-card">
-      <svg class="breeze" viewBox="0 0 1200 400" preserveAspectRatio="none"><path d="M-60 250 C 140 170, 300 330, 520 250 S 880 140, 1260 230"/><path d="M-60 300 C 180 230, 360 360, 600 290 S 940 210, 1260 300"/><path d="M-60 180 C 200 120, 380 240, 640 170 S 1000 90, 1260 160"/></svg>
       <span class="drop-icon"><span data-icon="upload"></span></span>
       <strong data-i18n="drop.title"></strong>
       <p id="drop-text"></p>
@@ -67,7 +67,7 @@
   </dialog>
   <dialog id="pair-dialog" class="modal pair">
     <div class="pair-body">
-      <span class="avatar pair-ring"><span data-icon="phone"></span></span>
+      <span class="avatar"><span data-icon="phone"></span></span>
       <h2 id="pair-title"></h2>
       <p data-i18n="pair.text"></p>
       <div id="pair-code" class="code"></div>

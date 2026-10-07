@@ -25,6 +25,8 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         "tray_open" => if fr { "Ouvrir Brise" } else { "Open Brise" },
         "tray_quit" => if fr { "Quitter Brise" } else { "Quit Brise" },
         "pick_title" => if fr { "Choisir des fichiers à partager" } else { "Choose files to share" },
+        "pick_wallpaper_title" => if fr { "Choisir une image de fond" } else { "Choose a background picture" },
+        "pick_wallpaper_filter" => if fr { "Images" } else { "Pictures" },
         "received" => if fr { "Fichier reçu" } else { "File received" },
         "received_many" => if fr { "{count} fichiers reçus" } else { "{count} files received" },
         "pair_title" => if fr { "{name} souhaite se connecter" } else { "{name} wants to connect" },
