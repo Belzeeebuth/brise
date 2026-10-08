@@ -20,7 +20,7 @@ Comment=Partagez vos fichiers avec votre téléphone
 Exec=$HOME/.local/bin/brise %F
 Icon=brise
 Terminal=false
-Categories=Network;FileTransfer;Utility;
+Categories=Network;FileTransfer;
 Keywords=partage;fichiers;airdrop;QR;téléphone;share;files;phone;
 MimeType=$(grep '^MimeType=' "$root/src-tauri/brise.desktop.hbs" | cut -d= -f2-)
 StartupWMClass=brise
