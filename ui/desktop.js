@@ -100,8 +100,14 @@ function heroConnect(dialog = false) {
   const c = state.connection, ready = connectStatus().status === 'ready' && state.pairUrl;
   const twoCodes = c.mode === 'hotspot' && c.hotspot && ready;
   const steps = twoCodes ? [t('connect.hotspot.step1'), t('connect.hotspot.step2'), t('connect.step3')] : [t('connect.step1'), t('connect.step2'), t('connect.step3')];
-  const meta = ready ? `<div class="qr-meta"><span>${escape(t(`connect.need.${c.mode}`))}</span><button class="icon-button small" data-action="rotate" title="${escape(t('action.new_code'))}" aria-label="${escape(t('action.new_code'))}">${icon('refresh')}</button></div>` : '';
+  const meta = ready ? `<div class="qr-meta"><span>${escape(t(`connect.need.${c.mode}`))}</span><button class="icon-button small" data-action="rotate" title="${escape(t('action.new_code'))}" aria-label="${escape(t('action.new_code'))}">${icon('refresh')}</button></div>${manualLine()}` : '';
   return `<div class="connect-inner${twoCodes ? ' two-qr' : ''}"><div class="connect-copy"><h1 id="connect-title">${escape(t('connect.title'))}</h1><p class="lead">${escape(t('connect.lead'))}</p><ol class="steps">${steps.map(step => `<li>${escape(step)}</li>`).join('')}</ol><div class="connect-actions">${ready ? `<button class="button primary" data-action="copy-link">${icon('link')}${escape(t('action.copy_link'))}</button>` : ''}<button class="link-button" data-action="modes">${icon(c.mode)}${escape(t('action.change_mode'))}</button></div></div><div class="qr-zone">${qrBlock()}${meta}</div></div>`;
+}
+function pairCodeText() { const code = String(state.pairCode || ''); return code ? `${code.slice(0, 3)}-${code.slice(3)}` : ''; }
+function manualLine() {
+  if (!state.pairUrl || !state.pairCode) return '';
+  const url = state.pairUrl.replace(/\/connect#.*$/, '');
+  return `<p class="manual">${escape(t('connect.manual', { url }))} <code>${escape(pairCodeText())}</code></p>`;
 }
 function miniConnect() {
   const ready = connectStatus().status === 'ready' && state.pairUrl;
@@ -121,7 +127,7 @@ async function loadQrs() {
   $$('img[data-qr="wifi"]').forEach(img => { if (qrCache.wifi.src && img.src !== qrCache.wifi.src) img.src = qrCache.wifi.src; });
 }
 function renderConnect() {
-  const key = JSON.stringify([lang, state.connection.mode, state.connection.status, state.connection.message, state.connection.hotspot, state.pairUrl, state.serverError]);
+  const key = JSON.stringify([lang, state.connection.mode, state.connection.status, state.connection.message, state.connection.hotspot, state.pairUrl, state.pairCode, state.serverError]);
   patch($('#connect-panel'), key, heroConnect());
   patch($('#rail-connect'), key, miniConnect());
   if (dialogKind === 'connect' && keys['dialog-connect'] !== key) { keys['dialog-connect'] = key; $('#dialog-connect').innerHTML = heroConnect(true); }
@@ -149,13 +155,24 @@ function sharedRow(file, downloads) {
   const meta = `<span>${formatSize(file.size)}</span>${dl ? `<span class="sep">·</span><span>${escape(t('file.downloading', { name: dl.sender }))}</span>` : ''}`;
   return `<div class="row shared${fresh(seen.shared, file.id)}" data-file="${file.id}">${media(file)}<div class="row-main"><span class="row-name" title="${escape(file.name)}">${escape(file.name)}</span><span class="row-meta">${meta}</span>${dl ? `<span data-progress="${dl.id}">${progressBar(percent, file.name)}</span>` : ''}</div>${status}<div class="row-actions"><button class="icon-button small" data-reveal="${file.id}" title="${escape(t('action.reveal'))}" aria-label="${escape(t('action.reveal'))}">${icon('folder')}</button><button class="icon-button small danger" data-remove="${file.id}" title="${escape(t('file.remove'))}" aria-label="${escape(`${t('file.remove')} : ${file.name}`)}">${icon('x')}</button></div></div>`;
 }
+function noteRow(note) {
+  const link = isLink(note.text);
+  const outgoing = note.direction === 'outgoing';
+  const meta = outgoing
+    ? `<span>${escape(link ? t('text.link') : t('text.kind'))}</span>`
+    : `<span>${escape(link ? t('text.link') : t('text.kind'))}</span><span class="sep">·</span><span>${escape(t('inbox.from', { name: note.sender }))}</span><span class="sep">·</span><span>${formatTime(note.createdAt)}</span>`;
+  const actions = `<button class="icon-button small" data-copy="${note.id}" title="${escape(t('text.copy'))}" aria-label="${escape(t('text.copy'))}">${icon('copy')}</button>${link ? `<a class="icon-button small" href="${escape(note.text)}" target="_blank" rel="noreferrer" title="${escape(t('text.open'))}" aria-label="${escape(t('text.open'))}">${icon('open')}</a>` : ''}<button class="icon-button small danger" data-remove-note="${note.id}" title="${escape(outgoing ? t('text.remove') : t('text.delete'))}" aria-label="${escape(outgoing ? t('text.remove') : t('text.delete'))}">${icon('x')}</button>`;
+  return `<div class="row note clickable${fresh(outgoing ? seen.shared : seen.received, note.id)}" data-note="${note.id}"><span class="kind-tile kind-text">${icon('text')}</span><div class="row-main"><span class="row-name" title="${escape(notePreview(note.text))}">${escape(notePreview(note.text))}</span><span class="row-meta">${meta}</span></div><div class="row-actions">${actions}</div></div>`;
+}
 function renderSend(approved) {
   $('#send-title').textContent = approved.length > 1 ? t('send.title_many') : t('send.title');
   const shared = state.files.filter(f => f.direction === 'outgoing');
+  const notes = (state.notes || []).filter(n => n.direction === 'outgoing');
   const downloads = state.transfers.filter(t => t.direction === 'download');
-  $('#dropzone').classList.toggle('big', !shared.length);
-  const key = JSON.stringify([lang, shared.map(f => [f.id, f.downloads, f.size]), downloads.map(d => [d.id, d.fileId, d.sender])]);
-  const html = shared.length ? shared.map(f => sharedRow(f, downloads)).join('') : `<p class="dropzone-note">${escape(approved.length ? t('send.empty') : t('send.waiting_device'))}</p>`;
+  const items = shared.map(f => ({ at: f.createdAt, html: () => sharedRow(f, downloads) })).concat(notes.map(n => ({ at: n.createdAt, html: () => noteRow(n) }))).sort((a, b) => b.at - a.at);
+  $('#dropzone').classList.toggle('big', !items.length);
+  const key = JSON.stringify([lang, shared.map(f => [f.id, f.downloads, f.size]), notes.map(n => n.id), downloads.map(d => [d.id, d.fileId, d.sender])]);
+  const html = items.length ? items.map(i => i.html()).join('') : `<p class="dropzone-note">${escape(approved.length ? t('send.empty') : t('send.waiting_device'))}</p>`;
   if (!patch($('#shared-list'), key, html)) updateProgress(downloads);
 }
 
@@ -168,17 +185,19 @@ function receivedRow(file) {
   return `<div class="row clickable${fresh(seen.received, file.id)}" data-open-row="${file.id}">${media(file)}<div class="row-main"><span class="row-name" title="${escape(file.name)}">${escape(file.name)}</span><span class="row-meta"><span>${formatSize(file.size)}</span><span class="sep">·</span><span>${escape(t('inbox.from', { name: file.sender }))}</span><span class="sep">·</span><span>${formatTime(file.createdAt)}</span></span></div><div class="row-actions"><button class="icon-button small" data-open="${file.id}" title="${escape(t('action.open'))}" aria-label="${escape(`${t('action.open')} : ${file.name}`)}">${icon('open')}</button><button class="icon-button small" data-reveal="${file.id}" title="${escape(t('action.reveal'))}" aria-label="${escape(t('action.reveal'))}">${icon('folder')}</button></div></div>`;
 }
 function renderInbox() {
-  const received = state.files.filter(f => f.direction === 'incoming');
+  const received = state.files.filter(f => f.direction === 'incoming').map(f => ({ at: f.createdAt, id: f.id, html: () => receivedRow(f) }))
+    .concat((state.notes || []).filter(n => n.direction === 'incoming').map(n => ({ at: n.createdAt, id: n.id, html: () => noteRow(n) })))
+    .sort((a, b) => b.at - a.at);
   const incoming = state.transfers.filter(t => t.direction === 'incoming');
   $('#inbox-count').hidden = !received.length;
   $('#inbox-count').textContent = received.length;
   const key = JSON.stringify([lang, received.map(f => f.id), incoming.map(t => [t.id, t.paused, t.sender])]);
   let html = incoming.map(incomingCard).join('');
   let day = '';
-  for (const file of received) {
-    const label = dayLabel(file.createdAt);
+  for (const item of received) {
+    const label = dayLabel(item.at);
     if (label !== day) { day = label; html += `<div class="group-label">${escape(label)}</div>`; }
-    html += receivedRow(file);
+    html += item.html();
   }
   if (!html) html = emptyState('download', t('inbox.empty.title'), t('inbox.empty.text'));
   if (!patch($('#inbox-list'), key, html)) updateProgress(incoming);
@@ -262,7 +281,7 @@ function connectDialog() {
 }
 function devicesDialog(rerender = false) {
   const visible = state.devices.filter(d => d.status !== 'revoked');
-  const html = `<div class="section"><div class="device-list">${visible.length ? visible.map(d => `<div class="device-row">${avatar(d)}<span class="who"><strong>${escape(d.name)}</strong><span>${escape(deviceState(d))}</span></span>${d.status === 'pending' ? `<button class="button secondary small" data-decide="${d.id}" data-approve="false">${escape(t('action.decline'))}</button><button class="button primary small" data-decide="${d.id}" data-approve="true">${escape(t('action.accept'))}</button>` : `<button class="button secondary small" data-decide="${d.id}" data-approve="false">${escape(t('action.disconnect'))}</button>`}</div>`).join('') : `<p>${escape(t('devices.empty'))}</p>`}</div></div><div class="modal-actions"><button class="button primary" data-action="connect-dialog">${icon('plus')}${escape(t('devices.connect_another'))}</button></div>`;
+  const html = `<p>${escape(t('devices.trusted_text'))}</p><div class="section"><div class="device-list">${visible.length ? visible.map(d => `<div class="device-row">${avatar(d)}<span class="who"><strong>${escape(d.name)}</strong><span>${escape(deviceState(d))}</span></span>${d.status === 'pending' ? `<button class="button secondary small" data-decide="${d.id}" data-approve="false">${escape(t('action.decline'))}</button><button class="button primary small" data-decide="${d.id}" data-approve="true">${escape(t('action.accept'))}</button>` : `<button class="button secondary small" data-decide="${d.id}" data-approve="false">${escape(t('action.disconnect'))}</button>`}</div>`).join('') : `<p>${escape(t('devices.empty'))}</p>`}</div></div><div class="modal-actions"><button class="button primary" data-action="connect-dialog">${icon('plus')}${escape(t('devices.connect_another'))}</button></div>`;
   if (rerender) { if ($('#dialog').open) $('#dialog-body').innerHTML = html; return; }
   show('devices', t('devices.title'), html);
 }
@@ -327,6 +346,16 @@ function renderSettingsPane() {
   pane.innerHTML = settingsPaneHtml();
   $$('[data-pane]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.pane === settingsPane)));
 }
+function textDialog(prefill = '') {
+  show('text', t('text.title'), `<form id="text-form" class="field"><textarea id="text-input" class="input multiline" rows="6" placeholder="${escape(t('text.placeholder'))}" required>${escape(prefill)}</textarea><p class="hint">${icon('info')}<span>${escape(t('text.paste_hint'))}</span></p><div class="modal-actions"><button class="button secondary" type="button" data-close>${escape(t('action.cancel'))}</button><button class="button primary" type="submit">${icon('upload')}${escape(t('text.submit'))}</button></div></form>`);
+  const input = $('#text-input'); input.focus(); input.setSelectionRange(input.value.length, input.value.length);
+}
+function noteDialog(id) {
+  const note = (state.notes || []).find(n => n.id === id);
+  if (!note) return;
+  const link = isLink(note.text);
+  show('note', link ? t('text.link') : t('text.kind'), `<div class="note-full">${escape(note.text)}</div><div class="modal-actions">${link ? `<a class="button secondary" href="${escape(note.text)}" target="_blank" rel="noreferrer">${icon('open')}${escape(t('text.open'))}</a>` : ''}<button class="button primary" data-copy="${note.id}">${icon('copy')}${escape(t('text.copy'))}</button></div>`);
+}
 function helpDialog() {
   const card = (glyph, key) => `<div class="help-card"><h3>${icon(glyph)}${escape(t(`help.${key}.title`))}</h3><p>${escape(t(`help.${key}.text`))}</p></div>`;
   show('help', t('help.title'), `<div class="help-grid">${card('scan', 'connect')}${card('upload', 'transfer')}${card('internet', 'modes')}${card('alert', 'trouble')}${card('lock', 'privacy')}</div>`, { wide: true });
@@ -356,6 +385,8 @@ document.addEventListener('click', async event => {
     }
     if (el.dataset.decide) { el.disabled = true; await call('decide', { id: el.dataset.decide, approve: el.dataset.approve === 'true' }); await refresh(); return; }
     if (el.dataset.remove) { await call('remove_shared', { id: el.dataset.remove }); seen.shared.delete(el.dataset.remove); toast(t('toast.removed')); await refresh(); return; }
+    if (el.dataset.copy) { const note = (state.notes || []).find(n => n.id === el.dataset.copy); if (note && await copyText(note.text)) toast(t('text.copied')); return; }
+    if (el.dataset.removeNote) { await call('remove_note', { id: el.dataset.removeNote }); toast(t('toast.text_removed')); await refresh(); return; }
     if (el.dataset.open) { await call('open_file', { id: el.dataset.open }); return; }
     if (el.dataset.reveal) { await call('reveal_file', { id: el.dataset.reveal }); return; }
     if (el.dataset.themeChoice) { await setThemeChoice(el.dataset.themeChoice); $$('[data-theme-choice]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeChoice === themeChoice))); return; }
@@ -366,6 +397,7 @@ document.addEventListener('click', async event => {
     switch (el.dataset.action) {
       case 'modes': modesDialog(); break;
       case 'settings': settingsDialog(); break;
+      case 'text': textDialog(); break;
       case 'help': helpDialog(); break;
       case 'devices': devicesDialog(); break;
       case 'connect-dialog': connectDialog(); break;
@@ -392,7 +424,24 @@ document.addEventListener('dblclick', event => {
   const row = event.target.closest('[data-open-row]');
   if (row && !event.target.closest('button')) call('open_file', { id: row.dataset.openRow }).catch(error => toast(error.message, 'error'));
 });
+document.addEventListener('click', event => {
+  const row = event.target.closest('[data-note]');
+  if (row && !event.target.closest('button, a')) noteDialog(row.dataset.note);
+});
+document.addEventListener('paste', event => {
+  if (event.target.closest('input, textarea') || $('#dialog').open || $('#pair-dialog').open || !state) return;
+  const text = event.clipboardData?.getData('text/plain')?.trim();
+  if (text) { event.preventDefault(); textDialog(text); }
+});
 document.addEventListener('submit', async event => {
+  if (event.target.id === 'text-form') {
+    event.preventDefault();
+    const button = event.target.querySelector('button[type=submit]'); button.disabled = true;
+    try { await call('share_text', { text: $('#text-input').value }); closeDialog(); toast(t('toast.text_shared')); await refresh(); }
+    catch (error) { toast(error.message, 'error'); }
+    finally { button.disabled = false; }
+    return;
+  }
   if (event.target.id !== 'network-form') return;
   event.preventDefault();
   try { await call('set_address', { address: $('#network-address').value.trim() }); closeDialog(); toast(t('toast.address_updated')); await refresh(); }

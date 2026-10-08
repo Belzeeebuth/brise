@@ -66,6 +66,7 @@
   --tile-audio: #e8e4f6; --tile-audio-fg: #5c4fb3;
   --tile-archive: #f4ead8; --tile-archive-fg: #94661b;
   --tile-document: #e4e8f1; --tile-document-fg: #44618b;
+  --tile-text: #ece6d8; --tile-text-fg: #7a5d1e;
 }
 
 :root[data-theme="dark"] {
@@ -107,6 +108,7 @@
   --tile-audio: #292544; --tile-audio-fg: #b2a6f2;
   --tile-archive: #3a2d15; --tile-archive-fg: #e8b96a;
   --tile-document: #222b3b; --tile-document-fg: #9db5dc;
+  --tile-text: #3a3221; --tile-text-fg: #e0c27a;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -148,6 +150,7 @@
     --tile-audio: #292544; --tile-audio-fg: #b2a6f2;
     --tile-archive: #3a2d15; --tile-archive-fg: #e8b96a;
     --tile-document: #222b3b; --tile-document-fg: #9db5dc;
+  --tile-text: #3a3221; --tile-text-fg: #e0c27a;
   }
 }
 
@@ -255,6 +258,11 @@ button.chip:hover { border-color: var(--line-strong); }
 .kind-audio { background: var(--tile-audio); color: var(--tile-audio-fg); }
 .kind-archive { background: var(--tile-archive); color: var(--tile-archive-fg); }
 .kind-document { background: var(--tile-document); color: var(--tile-document-fg); }
+.kind-text { background: var(--tile-text); color: var(--tile-text-fg); }
+.input.multiline { height: auto; min-height: 120px; padding: 10px 12px; resize: vertical; line-height: 1.45; font-family: inherit; }
+.note-full { max-height: 50vh; overflow: auto; padding: 12px 14px; border-radius: var(--r-sm); background: var(--panel-2); border: 1px solid var(--line); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13.5px; }
+.manual { max-width: 320px; margin-top: 2px; color: var(--ink-3); font-size: 12.5px; text-align: center; }
+.manual code { display: inline-block; padding: 1px 7px; border-radius: var(--r-xs); background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); font-weight: 700; letter-spacing: .08em; }
 .thumb { width: 40px; height: 40px; border-radius: var(--r-sm); object-fit: cover; flex-shrink: 0; background: var(--panel-3); }
 
 .progress { -webkit-appearance: none; appearance: none; display: block; width: 100%; height: 4px; border: 0; border-radius: 999px; background: var(--track); overflow: hidden; }

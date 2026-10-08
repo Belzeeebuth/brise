@@ -14,6 +14,9 @@ async fn main() {
     if !shared.is_empty() {
         app.brise.share_paths(&shared).expect("partage");
     }
+    if let Ok(text) = std::env::var("BRISE_E2E_TEXT") {
+        app.brise.share_text(&text).expect("texte");
+    }
     let port = app.network.lock().unwrap().port;
     let (token, _) = app.brise.pair_token();
     println!("{}", serde_json::json!({ "port": port, "pairUrl": format!("http://127.0.0.1:{port}/connect#{token}") }));

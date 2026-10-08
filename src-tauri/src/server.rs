@@ -1,5 +1,5 @@
 use crate::connections::{BoxFuture, Connections, Gateway, GatewayFactory};
-use crate::core::{AppError, Brise, Device, Direction, CHUNK_SIZE, IDLE_TIMEOUT};
+use crate::core::{AppError, Brise, Device, Direction, CHUNK_SIZE, IDLE_TIMEOUT, MAX_TEXT};
 use crate::network::Network;
 use crate::settings::Store;
 use axum::body::Body;
@@ -27,6 +27,11 @@ const I18N_JS: &str = include_str!("../../ui/i18n.js");
 const STYLES: &str = include_str!("../../ui/styles.css");
 const THEME_JS: &str = include_str!("../../ui/theme.js");
 const ICON: &str = include_str!("../../ui/icon.svg");
+const MANIFEST: &str = include_str!("../../ui/pwa/manifest.webmanifest");
+const ICON_180: &[u8] = include_bytes!("../../ui/pwa/icon-180.png");
+const ICON_192: &[u8] = include_bytes!("../../ui/pwa/icon-192.png");
+const ICON_512: &[u8] = include_bytes!("../../ui/pwa/icon-512.png");
+const ICON_MASKABLE: &[u8] = include_bytes!("../../ui/pwa/icon-maskable.png");
 const FONT_LATIN: &[u8] = include_bytes!("../../ui/fonts/manrope-latin.woff2");
 const FONT_LATIN_EXT: &[u8] = include_bytes!("../../ui/fonts/manrope-latin-ext.woff2");
 const WALLPAPER_FILES: &[(&str, &[u8])] = &[
@@ -81,6 +86,11 @@ pub fn router(ctx: Arc<Ctx>) -> Router {
         .route("/styles.css", get(|| async { asset(STYLES, "text/css; charset=utf-8") }))
         .route("/phone.css", get(|| async { asset(PHONE_CSS, "text/css; charset=utf-8") }))
         .route("/icon.svg", get(|| async { asset(ICON, "image/svg+xml") }))
+        .route("/manifest.webmanifest", get(|| async { asset(MANIFEST, "application/manifest+json") }))
+        .route("/icon-180.png", get(|| async { png(ICON_180) }))
+        .route("/icon-192.png", get(|| async { png(ICON_192) }))
+        .route("/icon-512.png", get(|| async { png(ICON_512) }))
+        .route("/icon-maskable.png", get(|| async { png(ICON_MASKABLE) }))
         .route("/fonts/manrope-latin.woff2", get(|| async { font(FONT_LATIN) }))
         .route("/fonts/manrope-latin-ext.woff2", get(|| async { font(FONT_LATIN_EXT) }))
         .route("/wallpapers/{name}", get(wallpaper))
@@ -88,6 +98,7 @@ pub fn router(ctx: Arc<Ctx>) -> Router {
         .route("/api/pair", post(pair))
         .route("/api/state", get(phone_state))
         .route("/api/uploads", post(begin_upload))
+        .route("/api/notes", post(send_note))
         .route("/api/uploads/{id}", get(upload_status).post(append).delete(discard))
         .route("/api/uploads/{id}/finish", post(finish))
         .route("/api/files/{id}", get(download).head(download))
@@ -102,6 +113,10 @@ fn asset(content: &'static str, kind: &'static str) -> Response {
 
 fn font(content: &'static [u8]) -> Response {
     ([(header::CONTENT_TYPE, "font/woff2")], content).into_response()
+}
+
+fn png(content: &'static [u8]) -> Response {
+    ([(header::CONTENT_TYPE, "image/png")], content).into_response()
 }
 
 async fn page() -> Response {
@@ -209,7 +224,7 @@ async fn pair(State(ctx): Shared, ConnectInfo(addr): ConnectInfo<SocketAddr>, he
     let name = value["name"].as_str().filter(|n| !n.trim().is_empty()).unwrap_or("Mon téléphone");
     let device = ctx.brise.pair(code, name)?;
     let secure = if ctx.public { "; Secure" } else { "" };
-    let cookie = format!("brise={}; HttpOnly; SameSite=Strict; Path=/{secure}", device.secret);
+    let cookie = format!("brise={}; HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000{secure}", device.secret);
     Ok((StatusCode::CREATED, [(header::SET_COOKIE, cookie)], Json(json!({ "id": device.id }))).into_response())
 }
 
@@ -221,6 +236,14 @@ async fn phone_state(State(ctx): Shared, headers: HeaderMap) -> Result<Json<Valu
     state["pc"] = json!(crate::network::hostname());
     state["wallpaper"] = ctx.settings.view();
     Ok(Json(state))
+}
+
+async fn send_note(State(ctx): Shared, headers: HeaderMap, body: Body) -> Result<Response> {
+    let device = device(&ctx, &headers)?;
+    let bytes = axum::body::to_bytes(body, MAX_TEXT + 4096).await.map_err(|_| AppError::new(413, "text_too_long"))?;
+    let value: Value = serde_json::from_slice(&bytes).map_err(|_| AppError::new(400, "invalid_request"))?;
+    let note = ctx.brise.receive_text(&device, value["text"].as_str().unwrap_or_default()).await?;
+    Ok((StatusCode::CREATED, Json(json!({ "id": note.id }))).into_response())
 }
 
 async fn begin_upload(State(ctx): Shared, headers: HeaderMap, body: Body) -> Result<Response> {

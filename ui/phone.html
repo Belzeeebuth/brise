@@ -8,6 +8,12 @@
   <meta name="theme-color" content="#16181c" media="(prefers-color-scheme: dark)">
   <title>Brise</title>
   <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="apple-touch-icon" href="/icon-180.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Brise">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <script src="/theme.js"></script>
   <link rel="stylesheet" href="/styles.css">
   <link rel="stylesheet" href="/phone.css">
@@ -28,11 +34,13 @@
       <section id="pair-screen" class="screen pair-layout" hidden>
         <div class="hero card">
           <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 25.5H39a6.5 6.5 0 1 0-6.5-6.5"/><path d="M49.5 38.5H25a6.5 6.5 0 1 0 6.5 6.5"/></g></svg>
-          <h1 data-i18n="phone.pair.title"></h1>
-          <p data-i18n="phone.pair.hero"></p>
+          <h1 id="pair-title" data-i18n="phone.pair.title"></h1>
+          <p id="pair-hero" data-i18n="phone.pair.hero"></p>
         </div>
         <form id="pair-form" class="card form-card">
+          <p id="pair-note" class="note" hidden><span data-icon="info"></span><span id="pair-note-text"></span></p>
           <p data-i18n="phone.pair.text"></p>
+          <label class="field" id="pair-code-field" hidden><span class="field-label" data-i18n="phone.manual.code"></span><input id="pair-code-input" class="input large code-input" maxlength="8" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="ABC-DEF"></label>
           <label class="field"><span class="field-label" data-i18n="phone.pair.name"></span><input id="device-name" class="input large" maxlength="48" autocomplete="off" required></label>
           <button class="button primary large block" type="submit"><span data-i18n="phone.pair.submit"></span></button>
         </form>
@@ -49,6 +57,7 @@
             <span class="send-icon"><span data-icon="upload"></span></span>
             <span class="send-copy"><strong data-i18n="phone.send.title"></strong><span data-i18n="phone.send.text"></span></span>
           </button>
+          <button id="send-text" class="button secondary large block text-button" type="button"><span data-icon="text"></span><span data-i18n="phone.text.button"></span></button>
           <div id="uploads" class="uploads"></div>
         </div>
         <div class="files-column card">

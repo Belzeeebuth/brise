@@ -158,7 +158,9 @@ impl App {
             "connection": connection,
             "devices": view.devices,
             "files": files,
+            "notes": view.notes,
             "transfers": view.transfers,
+            "pairCode": view.pair_code,
             "expiresAt": view.expires_at,
             "pairUrl": if server_error.is_some() { None } else { self.pair_url() },
             "receiveDir": self.brise.receive_dir,
@@ -288,6 +290,16 @@ fn remove_wallpaper(app: Shared<'_>) -> Reply<()> {
 }
 
 #[tauri::command]
+fn share_text(app: Shared<'_>, text: String) -> Reply<Value> {
+    Ok(serde_json::to_value(app.brise.share_text(&text)?).unwrap_or_default())
+}
+
+#[tauri::command]
+fn remove_note(app: Shared<'_>, id: String) -> Reply<()> {
+    app.brise.remove_note(&id)
+}
+
+#[tauri::command]
 fn remove_shared(app: Shared<'_>, id: String) -> Reply<()> {
     app.brise.remove_shared(&id)
 }
@@ -372,6 +384,11 @@ fn bridge(handle: AppHandle, app: Arc<App>) {
                     notify(&handle, &tr(lang, "pair_title").replace("{name}", &name), &tr(lang, "pair_body").replace("{code}", &code));
                 }
                 Some(Ok(Event::Received { name })) => pending.push(name),
+                Some(Ok(Event::ReceivedText { preview })) => {
+                    if !window_focused(&handle) {
+                        notify(&handle, tr(lang, "received_text"), &preview);
+                    }
+                }
                 Some(Err(tokio::sync::broadcast::error::RecvError::Lagged(_))) => continue,
                 Some(Err(_)) => break,
                 None => {
@@ -396,7 +413,8 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![get_state, qr, wifi_qr, decide, rotate, set_address, select_mode, probe_modes, pick_files, remove_shared, open_folder, reveal_file, open_file, set_wallpaper, pick_wallpaper, remove_wallpaper, quit])
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .invoke_handler(tauri::generate_handler![get_state, qr, wifi_qr, decide, rotate, set_address, select_mode, probe_modes, pick_files, remove_shared, share_text, remove_note, open_folder, reveal_file, open_file, set_wallpaper, pick_wallpaper, remove_wallpaper, quit])
         .setup(|tauri_app| {
             let handle = tauri_app.handle().clone();
             let (data_dir, receive_dir) = paths();

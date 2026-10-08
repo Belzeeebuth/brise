@@ -182,7 +182,7 @@ async fn slots_count_only_running_uploads_and_revocation_discards_them() {
 }
 
 #[tokio::test]
-async fn history_survives_a_restart_but_shares_and_sessions_do_not() {
+async fn history_and_trusted_devices_survive_a_restart_but_shares_do_not() {
     let dir = tempfile::tempdir().unwrap();
     let id = {
         let brise = open(&dir);
@@ -197,7 +197,8 @@ async fn history_survives_a_restart_but_shares_and_sessions_do_not() {
     assert_eq!(view.files.len(), 1);
     assert_eq!(view.files[0].direction, Direction::Incoming);
     assert_eq!(std::fs::read(brise.file(&id).unwrap().path).unwrap(), b"conserver");
-    assert!(view.devices.is_empty());
+    assert_eq!(view.devices.len(), 1);
+    assert_eq!(view.devices[0]["status"], "approved", "un appareil accepté est retrouvé au lancement suivant");
 }
 
 #[tokio::test]
@@ -215,4 +216,54 @@ async fn removing_a_share_keeps_the_original_and_never_touches_received_files() 
     assert!(original.exists());
     assert!(brise.file(&received).is_some());
     assert_eq!(brise.share_paths(&[dir.path().to_path_buf()]).unwrap_err().status, 400);
+}
+
+#[tokio::test]
+async fn trusted_devices_survive_a_restart_and_a_twin_replaces_the_old_one() {
+    let dir = tempfile::tempdir().unwrap();
+    let brise = open(&dir);
+    let device = phone(&brise);
+    let (token, _) = brise.pair_token();
+    let pending = brise.pair(&token, "Hésitant").unwrap();
+    drop(brise);
+    let brise = open(&dir);
+    assert_eq!(brise.authenticate(&device.secret).unwrap().status, Status::Approved);
+    assert_eq!(brise.authenticate(&pending.secret).unwrap_err().status, 401, "une demande en attente n’est pas conservée");
+    let code = brise.pair_code();
+    assert_eq!(code.len(), 6);
+    let twin = brise.pair(&format!(" {}-{} ", code[..3].to_lowercase(), &code[3..]), "iPhone de test").unwrap();
+    brise.decide(&twin.id, true).unwrap();
+    assert_eq!(brise.authenticate(&device.secret).unwrap_err().status, 401, "le même téléphone qui se représente remplace l’ancien");
+    assert_eq!(brise.desktop_view().devices.len(), 1);
+    brise.reset_pairing();
+    assert_ne!(brise.pair_code(), code);
+    assert_eq!(brise.pair(&code, "trop tard").unwrap_err().status, 403);
+    assert_eq!(brise.authenticate(&twin.secret).unwrap().status, Status::Approved);
+    brise.decide(&twin.id, false).unwrap();
+    drop(brise);
+    assert!(open(&dir).desktop_view().devices.is_empty(), "déconnecter oublie l’appareil");
+}
+
+#[tokio::test]
+async fn texts_go_both_ways_and_received_ones_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    let brise = open(&dir);
+    let device = phone(&brise);
+    assert_eq!(brise.share_text("   ").unwrap_err().code, "text_empty");
+    assert_eq!(brise.share_text(&"x".repeat(70_000)).unwrap_err().code, "text_too_long");
+    let link = brise.share_text(" https://example.org/page \n").unwrap();
+    assert_eq!(link.text, "https://example.org/page");
+    assert_eq!(brise.phone_state(&device)["notes"][0]["id"], link.id);
+    let received = brise.receive_text(&device, "Bonjour\u{7}\tle PC").await.unwrap();
+    assert_eq!(received.text, "Bonjour\tle PC");
+    assert_eq!(received.sender, "iPhone de test");
+    brise.remove_note(&link.id).unwrap();
+    assert!(brise.phone_state(&device)["notes"].as_array().unwrap().is_empty());
+    drop(brise);
+    let brise = open(&dir);
+    let notes = brise.desktop_view().notes;
+    assert_eq!(notes.len(), 1, "le texte reçu survit au redémarrage");
+    assert_eq!(notes[0].id, received.id);
+    brise.remove_note(&received.id).unwrap();
+    assert!(open(&dir).desktop_view().notes.is_empty());
 }

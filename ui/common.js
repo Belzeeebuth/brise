@@ -39,6 +39,8 @@ const ICONS = {
   picture: 'M19 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2zM3 16l5-5 4 4 3-3 6 6',
   trash: 'M3 6h18M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6M10 11v6M14 11v6',
   info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 16v-4M12 8h.01',
+  text: 'M4 6h16M4 12h16M4 18h10',
+  copy: 'M20 9h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
 };
 const icon = (name, extra = '') => `<svg class="icon ${extra}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] || ICONS.file}"/></svg>`;
 const $ = selector => document.querySelector(selector);
@@ -81,6 +83,25 @@ function toast(message, kind = 'info') {
   el.innerHTML = `${icon(kind === 'error' ? 'alert' : 'done')}<span>${escape(message)}</span>`;
   $('#toasts').append(el);
   setTimeout(() => { el.classList.add('leaving'); setTimeout(() => el.remove(), 300); }, kind === 'error' ? 7000 : 3800);
+}
+const isLink = text => /^https?:\/\/\S+$/i.test(String(text).trim()) && !/\s/.test(String(text).trim());
+async function copyText(text) {
+  try {
+    const manager = window.__TAURI__?.clipboardManager;
+    if (manager?.writeText) { await manager.writeText(text); return true; }
+  } catch {}
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  const area = document.createElement('textarea');
+  area.value = text; area.setAttribute('readonly', ''); area.style.position = 'fixed'; area.style.opacity = '0';
+  document.body.append(area); area.select();
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch {}
+  area.remove();
+  return ok;
+}
+function notePreview(text) {
+  const first = String(text).trim().split('\n')[0];
+  return first.length > 140 ? `${first.slice(0, 140)}…` : first;
 }
 function openDialog(title, html, { wide = false, className = '' } = {}) {
   const dialog = $('#dialog');

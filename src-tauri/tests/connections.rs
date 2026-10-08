@@ -137,6 +137,7 @@ async fn hotspot_needs_confirmation_uses_wpa2_and_restores_the_previous_wifi() {
     let fake = Fake::new(false, false);
     let c = connections(&s, fake.clone()).await;
     let phone = approved(&s.brise, "Avant");
+    let pending = s.brise.pair(&s.brise.pair_token().0, "Hésitant").unwrap();
     assert_eq!(c.select("hotspot", Some("wlan0".into()), false).unwrap_err().status, 409);
     assert_eq!(c.select("hotspot", Some("eth9".into()), true).unwrap_err().status, 400);
     c.select("hotspot", Some("wlan0".into()), true).unwrap();
@@ -144,7 +145,8 @@ async fn hotspot_needs_confirmation_uses_wpa2_and_restores_the_previous_wifi() {
     assert_eq!(c.view()["status"], "ready");
     assert_eq!(s.network.lock().unwrap().address.as_deref(), Some("10.42.0.1"));
     assert_eq!(c.origin().as_deref(), Some("http://10.42.0.1:53318"));
-    assert_eq!(status(&s.brise, &phone), None);
+    assert_eq!(status(&s.brise, &phone), Some(Status::Approved), "un appareil accepté reste connu après un changement de mode");
+    assert_eq!(status(&s.brise, &pending.id), None, "une demande en attente est abandonnée");
     let hotspot = c.hotspot().unwrap();
     assert!(hotspot.password.len() >= 12);
     assert!(fake.called(&["add", "wpa-psk", "rsn", "connection.autoconnect", "no"]));
@@ -266,7 +268,7 @@ async fn internet_mode_exposes_only_phone_routes_and_a_dead_tunnel_closes_everyt
     c.select("internet", None, false).unwrap();
     settle(&c).await;
     assert_eq!(c.origin().as_deref(), Some("https://example-tunnel.trycloudflare.com"));
-    assert_eq!(status(&s.brise, &before), None);
+    assert_eq!(status(&s.brise, &before), Some(Status::Approved));
 
     let origin = "https://example-tunnel.trycloudflare.com";
     let port = c.gateway_port().unwrap();
@@ -288,7 +290,9 @@ async fn internet_mode_exposes_only_phone_routes_and_a_dead_tunnel_closes_everyt
     }
     assert_eq!(c.view()["status"], "error");
     assert!(c.origin().is_none());
-    assert!(s.brise.desktop_view().devices.is_empty());
+    let devices = s.brise.desktop_view().devices;
+    assert_eq!(devices.len(), 1, "l’appareil accepté reste connu, la demande en attente du tunnel est abandonnée");
+    assert_eq!(devices[0]["name"], "Avant");
     tokio::time::sleep(Duration::from_millis(50)).await;
     let closed = tokio::net::TcpStream::connect(("127.0.0.1", port)).await;
     assert!(closed.is_err() || raw(port, format!("GET / HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n")).await.contains("503"));

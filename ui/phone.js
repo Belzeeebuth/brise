@@ -30,6 +30,17 @@ function showError(message) {
   showShell(); screen('error-screen'); $('#status-chip').hidden = true;
   $('#error-text').textContent = message;
 }
+function showPair(manual, closed = false) {
+  showShell(); screen('pair-screen'); $('#status-chip').hidden = true;
+  $('#pair-title').textContent = manual ? t('phone.manual.title') : t('phone.pair.title');
+  $('#pair-hero').textContent = manual ? t('phone.manual.text') : t('phone.pair.hero');
+  $('#pair-code-field').hidden = !manual;
+  $('#pair-code-input').required = manual;
+  $('#pair-note').hidden = !closed;
+  $('#pair-note-text').textContent = closed ? t('phone.pair.closed') : '';
+  if (!$('#device-name').value) $('#device-name').value = defaultName();
+  if (manual) $('#pair-code-input').focus();
+}
 function statusChip(text, kind = '') {
   $('#status-chip').hidden = false;
   $('#status-chip .dot').className = `dot ${kind}`;
@@ -74,6 +85,12 @@ function fileRow(file) {
   seenFiles.add(file.id);
   return `<div class="row${isNew ? ' fresh' : ''}">${kindTile(file.name)}<div class="row-main"><span class="row-name" title="${escape(file.name)}">${escape(file.name)}</span><span class="row-meta">${formatSize(file.size)}</span></div><div class="row-actions">${shareButton(file)}<a class="button secondary small" href="/api/files/${file.id}" download>${icon('download')}${escape(t('phone.download'))}</a></div></div>`;
 }
+function noteRow(note) {
+  const isNew = !firstFiles && !seenFiles.has(note.id);
+  seenFiles.add(note.id);
+  const link = isLink(note.text);
+  return `<div class="row note${isNew ? ' fresh' : ''}"><span class="kind-tile kind-text">${icon('text')}</span><div class="row-main"><span class="row-name note-text">${escape(note.text)}</span><span class="row-meta">${escape(link ? t('text.link') : t('text.kind'))}</span></div><div class="row-actions">${link ? `<a class="button secondary small" href="${escape(note.text)}" target="_blank" rel="noreferrer">${icon('open')}${escape(t('action.open'))}</a>` : ''}<button class="button secondary small" data-copy="${note.id}">${icon('copy')}${escape(t('text.copy'))}</button></div></div>`;
+}
 function updateState(next) {
   state = next; hadSession = true; errorCount = 0;
   syncLook(next.wallpaper);
@@ -85,12 +102,14 @@ function updateState(next) {
   }
   screen('workspace');
   statusChip(next.pc ? t('phone.connected_to', { pc: next.pc }) : t('phone.connected'));
-  $('#file-count').hidden = !next.files.length;
-  $('#file-count').textContent = next.files.length;
   for (const id of prepared.keys()) if (!next.files.some(f => f.id === id)) prepared.delete(id);
-  const key = JSON.stringify([lang, next.files.map(f => [f.id, f.name, f.size])]);
+  const notes = next.notes || [];
+  const items = next.files.map(f => ({ at: f.createdAt, html: () => fileRow(f) })).concat(notes.map(n => ({ at: n.createdAt, html: () => noteRow(n) }))).sort((a, b) => b.at - a.at);
+  $('#file-count').hidden = !items.length;
+  $('#file-count').textContent = items.length;
+  const key = JSON.stringify([lang, next.files.map(f => [f.id, f.name, f.size]), notes.map(n => n.id)]);
   if (key !== filesKey) {
-    $('#file-list').innerHTML = next.files.length ? next.files.map(fileRow).join('') : emptyState('laptop', t('phone.files.empty.title'), t('phone.files.empty.text'));
+    $('#file-list').innerHTML = items.length ? items.map(i => i.html()).join('') : emptyState('laptop', t('phone.files.empty.title'), t('phone.files.empty.text'));
     filesKey = key; firstFiles = false;
   }
   renderUploads();
@@ -101,8 +120,8 @@ async function refresh() {
   try { updateState(await api('/api/state', undefined, 'GET')); }
   catch (error) {
     if (error.status === 401) {
-      clearTimeout(pollTimer); hadSession = false;
-      showError(t('phone.error.closed'));
+      clearTimeout(pollTimer); hadSession = false; pairCode = '';
+      showPair(true, true);
     } else {
       errorCount++; statusChip(t('phone.reconnecting'), 'warn live');
       if (!hadSession) showError(t('phone.error.unreachable'));
@@ -239,7 +258,11 @@ async function processQueue() {
   } finally { uploading = false; keepAwake(false); uploads = uploads.filter(u => u.status !== 'done').concat(uploads.filter(u => u.status === 'done').slice(-8)); }
 }
 function help() {
-  openDialog(t('help.title'), [1, 2, 3, 4].map(n => `<div class="section"><p>${escape(t(`phone.help.text${n}`))}</p></div>`).join(''));
+  openDialog(t('help.title'), [1, 2, 3, 4, 5].map(n => `<div class="section"><p>${escape(t(`phone.help.text${n}`))}</p></div>`).join(''));
+}
+function textDialog() {
+  openDialog(t('phone.text.title'), `<form id="phone-text-form" class="field"><textarea id="phone-text" class="input multiline" rows="5" placeholder="${escape(t('text.placeholder'))}" required></textarea><div class="modal-actions"><button class="button primary large block" type="submit">${icon('upload')}${escape(t('text.submit'))}</button></div></form>`);
+  $('#phone-text').focus();
 }
 document.addEventListener('click', async event => {
   const el = event.target.closest('button'); if (!el || el.closest('[data-close]')) return;
@@ -248,15 +271,25 @@ document.addEventListener('click', async event => {
     if (el.dataset.cancel) { const item = uploads.find(u => u.id === el.dataset.cancel); if (item) { item.status = 'cancelled'; item.xhr?.abort(); discardRemote(item); item.file = null; renderUploads(); } }
     if (el.dataset.retry) { const item = uploads.find(u => u.id === el.dataset.retry); if (item?.file) { item.status = 'queued'; if (!item.remoteId) item.bytes = 0; renderUploads(); processQueue(); } }
     if (el.id === 'send-card') $('#file-picker').click();
+    if (el.id === 'send-text') textDialog();
+    if (el.dataset.copy) { const note = state?.notes?.find(n => n.id === el.dataset.copy); if (note && await copyText(note.text)) toast(t('text.copied')); }
     if (el.dataset.action === 'help') help();
     if (el.dataset.action === 'refresh') { hadSession = true; await refresh(); }
   } catch (error) { toast(error.message, 'error'); }
   finally { el.disabled = false; }
 });
 document.addEventListener('submit', async event => {
+  if (event.target.id === 'phone-text-form') {
+    event.preventDefault(); const submit = event.target.querySelector('button[type=submit]'); submit.disabled = true;
+    try { await api('/api/notes', { text: $('#phone-text').value }); closeDialog(); toast(t('phone.text.done')); await refresh(); }
+    catch (error) { toast(error.message, 'error'); }
+    finally { submit.disabled = false; }
+    return;
+  }
   if (event.target.id !== 'pair-form') return;
   event.preventDefault(); const submit = event.target.querySelector('button[type=submit]'); submit.disabled = true;
-  try { await api('/api/pair', { code: pairCode, name: $('#device-name').value.trim() }); pairCode = ''; await refresh(); }
+  const code = pairCode || $('#pair-code-input').value.trim();
+  try { await api('/api/pair', { code, name: $('#device-name').value.trim() }); pairCode = ''; hadSession = true; await refresh(); }
   catch (error) { toast(error.message, 'error'); }
   finally { submit.disabled = false; }
 });
@@ -285,11 +318,13 @@ async function init() {
   api('/api/look', undefined, 'GET').then(syncLook).catch(() => {});
   try {
     if (location.pathname === '/connect' && fragment) {
-      pairCode = fragment; showShell(); screen('pair-screen');
-      $('#device-name').value = defaultName();
+      pairCode = fragment; showPair(false);
     } else {
       updateState(await api('/api/state', undefined, 'GET')); pollTimer = setTimeout(refresh, 1500);
     }
-  } catch (error) { showError(error.status === 401 ? t('phone.error.scan') : error.message); }
+  } catch (error) {
+    if (error.status === 401) showPair(true);
+    else showError(error.message);
+  }
 }
 document.addEventListener('DOMContentLoaded', init);

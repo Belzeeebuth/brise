@@ -43,7 +43,10 @@ body.phone { min-height: 100vh; min-height: 100svh; font-size: 15px; }
 .send-copy { display: grid; gap: 1px; }
 .send-copy strong { font-size: 17px; font-weight: 750; letter-spacing: -.01em; }
 .send-copy span { font-size: 13.5px; font-weight: 600; opacity: .85; }
+.text-button { margin-top: 10px; }
 .uploads { display: grid; gap: 8px; margin-top: 10px; }
+.code-input { font-family: var(--mono); letter-spacing: .14em; text-transform: uppercase; }
+.note-text { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
 .upload { display: flex; align-items: center; gap: 12px; padding: 11px 12px; border-radius: var(--r); border: 1px solid var(--line); background: var(--panel); -webkit-backdrop-filter: blur(var(--blur)); backdrop-filter: blur(var(--blur)); }
 .upload .row-main { gap: 2px; }
 .upload.error { border-color: var(--danger-line); }

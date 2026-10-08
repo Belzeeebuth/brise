@@ -280,7 +280,7 @@ impl Connections {
             state.message.clear();
             state.job = true;
         }
-        self.brise.revoke_all();
+        self.brise.reset_pairing();
         let this = self.clone();
         let job = async move { this.transition(mode, interface).await };
         match &self.runtime {
@@ -442,7 +442,7 @@ impl Connections {
         if let Some(gateway) = gateway {
             gateway.handle.abort();
         }
-        self.brise.revoke_all();
+        self.brise.reset_pairing();
     }
 
     async fn stop_tunnel(&self) {

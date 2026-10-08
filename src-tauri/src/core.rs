@@ -21,6 +21,8 @@ const MAX_DEVICES: usize = 12;
 const MAX_UPLOADS: usize = 3;
 const PAUSE_DELAY: u64 = 30_000;
 const UPLOAD_IDLE_LIMIT: u64 = 15 * 60 * 1000;
+pub const MAX_TEXT: usize = 64 * 1024;
+const CODE_ALPHABET: &[u8] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 
 pub fn now() -> u64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
@@ -73,6 +75,17 @@ pub fn token() -> String {
     let mut bytes = [0u8; 24];
     rand::rng().fill_bytes(&mut bytes);
     base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
+}
+
+/// Code court à taper sur le téléphone quand on ne peut pas scanner le QR.
+pub fn short_code() -> String {
+    let mut rng = rand::rng();
+    (0..6).map(|_| CODE_ALPHABET[rng.random_range(0..CODE_ALPHABET.len())] as char).collect()
+}
+
+/// Normalise un code tapé à la main : majuscules, sans espaces ni tirets.
+pub fn normalize_code(value: &str) -> String {
+    value.chars().filter(|c| c.is_ascii_alphanumeric()).map(|c| c.to_ascii_uppercase()).collect()
 }
 
 pub fn equal(a: &str, b: &str) -> bool {
@@ -137,6 +150,26 @@ pub struct Device {
     pub created_at: u64,
     pub last_seen: u64,
     pub code: String,
+}
+
+/// Appareil accepté, conservé d'un lancement à l'autre (devices.json).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct TrustedDevice {
+    id: String,
+    name: String,
+    secret: String,
+    created_at: u64,
+    last_seen: u64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Note {
+    pub id: String,
+    pub text: String,
+    pub direction: Direction,
+    pub sender: String,
+    pub created_at: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -234,14 +267,17 @@ struct Download {
 pub enum Event {
     PairRequest { name: String, code: String },
     Received { name: String },
+    ReceivedText { preview: String },
 }
 
 struct Inner {
     devices: Vec<Device>,
     files: HashMap<String, FileEntry>,
+    notes: HashMap<String, Note>,
     uploads: HashMap<String, Upload>,
     downloads: HashMap<String, Download>,
     pair_token: String,
+    short_code: String,
     expires_at: u64,
     attempts: HashMap<String, (u32, u64)>,
 }
@@ -265,9 +301,35 @@ fn private_dir(path: &Path) -> io::Result<()> {
 pub struct DesktopView {
     pub devices: Vec<serde_json::Value>,
     pub files: Vec<FileEntry>,
+    pub notes: Vec<Note>,
     pub transfers: Vec<TransferView>,
     pub pair_token: String,
+    pub pair_code: String,
     pub expires_at: u64,
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path, label: &str) -> io::Result<Option<T>> {
+    match fs::read_to_string(path) {
+        Ok(text) => match serde_json::from_str::<T>(&text) {
+            Ok(value) => Ok(Some(value)),
+            Err(_) => {
+                let backup = path.with_file_name(format!("{label}.illisible-{}.json", now()));
+                eprintln!("Brise : {label} illisible, conservé dans {}", backup.display());
+                fs::rename(path, backup)?;
+                Ok(None)
+            }
+        },
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error),
+    }
+}
+
+fn write_json(dir: &Path, name: &str, text: &str) -> io::Result<()> {
+    let temp = dir.join(format!("{name}.tmp"));
+    let mut options = OpenOptions::new();
+    options.write(true).create(true).truncate(true).mode(0o600);
+    io::Write::write_all(&mut options.open(&temp)?, text.as_bytes())?;
+    fs::rename(temp, dir.join(name))
 }
 
 impl Brise {
@@ -283,31 +345,30 @@ impl Brise {
             }
         }
         let mut files = HashMap::new();
-        let history_path = data_dir.join("history.json");
-        match fs::read_to_string(&history_path) {
-            Ok(text) => match serde_json::from_str::<Vec<FileEntry>>(&text) {
-                Ok(history) => {
-                    for mut file in history {
-                        let Some(disk_name) = file.disk_name.clone() else { continue };
-                        if file.direction != Direction::Incoming || !is_id(&file.id) || disk_name != safe_name(&disk_name) {
-                            continue;
-                        }
-                        let path = receive_dir.join(&disk_name);
-                        if path.is_file() {
-                            file.path = path;
-                            files.insert(file.id.clone(), file);
-                        }
-                    }
-                }
-                Err(_) => {
-                    let backup = data_dir.join(format!("history.illisible-{}.json", now()));
-                    eprintln!("Brise : historique illisible, conservé dans {}", backup.display());
-                    fs::rename(&history_path, backup)?;
-                }
-            },
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error),
+        for mut file in read_json::<Vec<FileEntry>>(&data_dir.join("history.json"), "history")?.unwrap_or_default() {
+            let Some(disk_name) = file.disk_name.clone() else { continue };
+            if file.direction != Direction::Incoming || !is_id(&file.id) || disk_name != safe_name(&disk_name) {
+                continue;
+            }
+            let path = receive_dir.join(&disk_name);
+            if path.is_file() {
+                file.path = path;
+                files.insert(file.id.clone(), file);
+            }
         }
+        let notes: HashMap<String, Note> = read_json::<Vec<Note>>(&data_dir.join("notes.json"), "notes")?
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|n| n.direction == Direction::Incoming && is_id(&n.id) && !n.text.is_empty() && n.text.len() <= MAX_TEXT)
+            .map(|n| (n.id.clone(), n))
+            .collect();
+        let devices: Vec<Device> = read_json::<Vec<TrustedDevice>>(&data_dir.join("devices.json"), "devices")?
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|d| is_id(&d.id) && !d.secret.is_empty())
+            .take(MAX_DEVICES)
+            .map(|d| Device { id: d.id, name: d.name, secret: d.secret, status: Status::Approved, created_at: d.created_at, last_seen: d.last_seen, code: String::new() })
+            .collect();
         let (changed, _) = watch::channel(0);
         let (events, _) = broadcast::channel(32);
         Ok(Arc::new(Self {
@@ -316,11 +377,13 @@ impl Brise {
             partial_dir,
             max_file_size: MAX_FILE_SIZE,
             inner: Mutex::new(Inner {
-                devices: Vec::new(),
+                devices,
                 files,
+                notes,
                 uploads: HashMap::new(),
                 downloads: HashMap::new(),
                 pair_token: token(),
+                short_code: short_code(),
                 expires_at: now() + TOKEN_TTL,
                 attempts: HashMap::new(),
             }),
@@ -351,6 +414,7 @@ impl Brise {
         {
             let mut inner = self.lock();
             inner.pair_token = token();
+            inner.short_code = short_code();
             inner.expires_at = now() + TOKEN_TTL;
         }
         self.notify();
@@ -359,6 +423,25 @@ impl Brise {
     pub fn pair_token(&self) -> (String, u64) {
         let inner = self.lock();
         (inner.pair_token.clone(), inner.expires_at)
+    }
+
+    pub fn pair_code(&self) -> String {
+        self.lock().short_code.clone()
+    }
+
+    /// Enregistre les appareils acceptés pour les retrouver au prochain lancement.
+    fn save_devices(inner: &Inner, data_dir: &Path) {
+        let trusted: Vec<TrustedDevice> = inner
+            .devices
+            .iter()
+            .filter(|d| d.status == Status::Approved)
+            .map(|d| TrustedDevice { id: d.id.clone(), name: d.name.clone(), secret: d.secret.clone(), created_at: d.created_at, last_seen: d.last_seen })
+            .collect();
+        if let Ok(text) = serde_json::to_string_pretty(&trusted) {
+            if let Err(error) = write_json(data_dir, "devices.json", &text) {
+                eprintln!("Brise : appareils non enregistrés ({error})");
+            }
+        }
     }
 
     pub fn throttle(&self, key: &str) -> Result<()> {
@@ -377,7 +460,8 @@ impl Brise {
         let now = now();
         let device = {
             let mut inner = self.lock();
-            if !equal(code, &inner.pair_token) || now >= inner.expires_at {
+            let typed = normalize_code(code);
+            if (!equal(code, &inner.pair_token) && !equal(&typed, &inner.short_code)) || now >= inner.expires_at {
                 return Err(AppError::new(403, "qr_expired"));
             }
             inner.devices.retain(|d| match d.status {
@@ -406,25 +490,42 @@ impl Brise {
         Ok(device)
     }
 
+    fn revoke(inner: &mut Inner, id: &str, temps: &mut Vec<PathBuf>) {
+        if let Some(device) = inner.devices.iter_mut().find(|d| d.id == id) {
+            device.status = Status::Revoked;
+        }
+        for download in inner.downloads.values().filter(|d| d.owner_id == id) {
+            download.cancel.cancel();
+        }
+        inner.downloads.retain(|_, d| d.owner_id != id);
+        let ids: Vec<String> = inner.uploads.iter().filter(|(_, u)| u.owner_id == id && u.completion != Some(Completion::Processing)).map(|(k, _)| k.clone()).collect();
+        for upload_id in ids {
+            if let Some(upload) = inner.uploads.remove(&upload_id) {
+                upload.cancel.cancel();
+                temps.push(upload.path);
+            }
+        }
+    }
+
+    /// Accepte ou refuse un appareil. Un appareil accepté reste connu d'un
+    /// lancement à l'autre ; le refuser (ou le déconnecter) l'oublie. Un
+    /// téléphone qui se représente sous le même nom remplace l'ancien.
     pub fn decide(&self, id: &str, approve: bool) -> Result<()> {
         let mut temps = Vec::new();
         {
             let mut inner = self.lock();
             let device = inner.devices.iter_mut().find(|d| d.id == id).ok_or_else(|| AppError::new(404, "device_not_found"))?;
             device.status = if approve { Status::Approved } else { Status::Revoked };
-            if !approve {
-                for download in inner.downloads.values().filter(|d| d.owner_id == id) {
-                    download.cancel.cancel();
+            let name = device.name.clone();
+            if approve {
+                let twins: Vec<String> = inner.devices.iter().filter(|d| d.id != id && d.status == Status::Approved && d.name == name).map(|d| d.id.clone()).collect();
+                for twin in twins {
+                    Self::revoke(&mut inner, &twin, &mut temps);
                 }
-                inner.downloads.retain(|_, d| d.owner_id != id);
-                let ids: Vec<String> = inner.uploads.iter().filter(|(_, u)| u.owner_id == id && u.completion != Some(Completion::Processing)).map(|(k, _)| k.clone()).collect();
-                for upload_id in ids {
-                    if let Some(upload) = inner.uploads.remove(&upload_id) {
-                        upload.cancel.cancel();
-                        temps.push(upload.path);
-                    }
-                }
+            } else {
+                Self::revoke(&mut inner, id, &mut temps);
             }
+            Self::save_devices(&inner, &self.data_dir);
         }
         for path in temps {
             let _ = fs::remove_file(path);
@@ -433,7 +534,17 @@ impl Brise {
         Ok(())
     }
 
-    pub fn revoke_all(&self) {
+    /// Nouveau code de connexion ; les demandes en attente sont abandonnées,
+    /// les appareils acceptés restent connus.
+    pub fn reset_pairing(&self) {
+        {
+            let mut inner = self.lock();
+            inner.devices.retain(|d| d.status != Status::Pending);
+        }
+        self.rotate();
+    }
+
+    pub fn forget_all(&self) {
         let ids: Vec<String> = self.lock().devices.iter().filter(|d| d.status != Status::Revoked).map(|d| d.id.clone()).collect();
         for id in ids {
             let _ = self.decide(&id, false);
@@ -506,12 +617,15 @@ impl Brise {
             .into_iter()
             .map(|f| serde_json::json!({ "id": f.id, "name": f.name, "size": f.size, "direction": f.direction, "sender": f.sender, "createdAt": f.created_at, "downloads": f.downloads }))
             .collect();
+        let mut notes: Vec<&Note> = if approved { inner.notes.values().filter(|n| n.direction == Direction::Outgoing).collect() } else { Vec::new() };
+        notes.sort_by_key(|n| std::cmp::Reverse(n.created_at));
         serde_json::json!({
             "role": "phone",
             "name": device.name,
             "status": current.map(|d| d.status),
             "code": current.map(|d| d.code.clone()),
             "files": files,
+            "notes": notes,
             "transfers": if approved { Self::transfers(&inner, Some(&device.id)) } else { Vec::new() },
             "maxFileSize": self.max_file_size,
         })
@@ -532,7 +646,53 @@ impl Brise {
             .collect();
         let mut files: Vec<FileEntry> = inner.files.values().cloned().collect();
         files.sort_by_key(|f| std::cmp::Reverse(f.created_at));
-        DesktopView { devices, files, transfers: Self::transfers(&inner, None), pair_token: inner.pair_token.clone(), expires_at: inner.expires_at }
+        let mut notes: Vec<Note> = inner.notes.values().cloned().collect();
+        notes.sort_by_key(|n| std::cmp::Reverse(n.created_at));
+        DesktopView { devices, files, notes, transfers: Self::transfers(&inner, None), pair_token: inner.pair_token.clone(), pair_code: inner.short_code.clone(), expires_at: inner.expires_at }
+    }
+
+    fn clean_text(text: &str) -> Result<String> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Err(AppError::new(400, "text_empty"));
+        }
+        if text.len() > MAX_TEXT {
+            return Err(AppError::new(413, "text_too_long"));
+        }
+        Ok(text.chars().filter(|c| !c.is_control() || matches!(c, '\n' | '\t')).collect())
+    }
+
+    /// Texte ou lien partagé depuis le PC, visible par les téléphones acceptés.
+    pub fn share_text(&self, text: &str) -> Result<Note> {
+        let note = Note { id: uuid::Uuid::new_v4().to_string(), text: Self::clean_text(text)?, direction: Direction::Outgoing, sender: String::new(), created_at: now() };
+        self.lock().notes.insert(note.id.clone(), note.clone());
+        self.notify();
+        Ok(note)
+    }
+
+    /// Texte envoyé par un téléphone, conservé dans l'historique.
+    pub async fn receive_text(&self, device: &Device, text: &str) -> Result<Note> {
+        self.allowed(&device.id)?;
+        let note = Note { id: uuid::Uuid::new_v4().to_string(), text: Self::clean_text(text)?, direction: Direction::Incoming, sender: device.name.clone(), created_at: now() };
+        self.lock().notes.insert(note.id.clone(), note.clone());
+        self.save().await?;
+        let preview: String = note.text.lines().next().unwrap_or_default().chars().take(80).collect();
+        let _ = self.events.send(Event::ReceivedText { preview });
+        self.notify();
+        Ok(note)
+    }
+
+    pub fn remove_note(&self, id: &str) -> Result<()> {
+        let incoming = {
+            let mut inner = self.lock();
+            let note = inner.notes.remove(id).ok_or_else(|| AppError::new(404, "note_not_found"))?;
+            note.direction == Direction::Incoming
+        };
+        if incoming {
+            self.save_blocking()?;
+        }
+        self.notify();
+        Ok(())
     }
 
     pub fn share_paths(&self, paths: &[PathBuf]) -> Result<Vec<PathBuf>> {
@@ -907,20 +1067,32 @@ impl Brise {
         }
     }
 
+    fn snapshot(&self) -> Result<(String, String)> {
+        let inner = self.lock();
+        let files: Vec<&FileEntry> = inner.files.values().filter(|f| f.direction == Direction::Incoming).collect();
+        let notes: Vec<&Note> = inner.notes.values().filter(|n| n.direction == Direction::Incoming).collect();
+        let history = serde_json::to_string_pretty(&files).map_err(|_| AppError::new(500, "history_unreadable"))?;
+        let notes = serde_json::to_string_pretty(&notes).map_err(|_| AppError::new(500, "history_unreadable"))?;
+        Ok((history, notes))
+    }
+
     pub async fn save(&self) -> Result<()> {
         let _guard = self.save_lock.lock().await;
-        let snapshot: Vec<FileEntry> = self.lock().files.values().filter(|f| f.direction == Direction::Incoming).cloned().collect();
-        let text = serde_json::to_string_pretty(&snapshot).map_err(|_| AppError::new(500, "history_unreadable"))?;
+        let (history, notes) = self.snapshot()?;
         let data_dir = self.data_dir.clone();
         tokio::task::spawn_blocking(move || -> io::Result<()> {
-            let temp = data_dir.join("history.json.tmp");
-            let mut options = OpenOptions::new();
-            options.write(true).create(true).truncate(true).mode(0o600);
-            io::Write::write_all(&mut options.open(&temp)?, text.as_bytes())?;
-            fs::rename(temp, data_dir.join("history.json"))
+            write_json(&data_dir, "history.json", &history)?;
+            write_json(&data_dir, "notes.json", &notes)
         })
         .await
         .map_err(|_| AppError::new(500, "unexpected"))??;
+        Ok(())
+    }
+
+    fn save_blocking(&self) -> Result<()> {
+        let (history, notes) = self.snapshot()?;
+        write_json(&self.data_dir, "history.json", &history)?;
+        write_json(&self.data_dir, "notes.json", &notes)?;
         Ok(())
     }
 

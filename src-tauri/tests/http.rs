@@ -60,7 +60,7 @@ async fn paired(brise: &Arc<Brise>, app: &Router) -> String {
     let (token, _) = brise.pair_token();
     let pair = send(app, "POST", "/api/pair", &[], json!({ "code": token, "name": "Android" }).to_string()).await;
     assert_eq!(pair.status, StatusCode::CREATED);
-    assert!(pair.headers["set-cookie"].to_str().unwrap().contains("HttpOnly; SameSite=Strict"));
+    assert!(pair.headers["set-cookie"].to_str().unwrap().contains("HttpOnly; SameSite=Strict; Path=/; Max-Age=31536000"));
     let cookie = pair.cookie();
     assert_eq!(send(app, "GET", "/api/state", &[("cookie", &cookie)], "").await.json()["status"], "pending");
     brise.decide(pair.json()["id"].as_str().unwrap(), true).unwrap();
@@ -180,4 +180,23 @@ async fn wallpapers_are_served_and_the_look_is_public() {
     assert_eq!(look.status, StatusCode::OK);
     assert_eq!(look.json()["id"], "brume");
     assert!(look.json()["accent"].is_null());
+}
+
+#[tokio::test]
+async fn a_phone_sends_text_and_finds_the_web_app_manifest() {
+    let dir = tempfile::tempdir().unwrap();
+    let (brise, app) = setup(&dir);
+    let cookie = paired(&brise, &app).await;
+    let note = send(&app, "POST", "/api/notes", &[("cookie", &cookie)], json!({ "text": "https://example.org" }).to_string()).await;
+    assert_eq!(note.status, StatusCode::CREATED);
+    assert_eq!(brise.desktop_view().notes[0].text, "https://example.org");
+    assert_eq!(send(&app, "POST", "/api/notes", &[("cookie", &cookie)], json!({ "text": "" }).to_string()).await.json()["error"], "text_empty");
+    assert_eq!(send(&app, "POST", "/api/notes", &[], json!({ "text": "x" }).to_string()).await.status, StatusCode::UNAUTHORIZED);
+    let manifest = send(&app, "GET", "/manifest.webmanifest", &[], "").await;
+    assert_eq!(manifest.headers["content-type"], "application/manifest+json");
+    assert!(manifest.json()["icons"].as_array().unwrap().len() >= 3);
+    assert_eq!(send(&app, "GET", "/icon-180.png", &[], "").await.headers["content-type"], "image/png");
+    let code = brise.pair_code();
+    let typed = send(&app, "POST", "/api/pair", &[], json!({ "code": format!("{}-{}", &code[..3], &code[3..]), "name": "Au clavier" }).to_string()).await;
+    assert_eq!(typed.status, StatusCode::CREATED, "le code court tapé à la main suffit");
 }

@@ -29,6 +29,7 @@ pub fn tr(lang: Lang, key: &str) -> &'static str {
         "pick_wallpaper_filter" => if fr { "Images" } else { "Pictures" },
         "received" => if fr { "Fichier reçu" } else { "File received" },
         "received_many" => if fr { "{count} fichiers reçus" } else { "{count} files received" },
+        "received_text" => if fr { "Texte reçu" } else { "Text received" },
         "pair_title" => if fr { "{name} souhaite se connecter" } else { "{name} wants to connect" },
         "pair_body" => if fr { "Code {code} : vérifiez qu’il s’affiche sur le téléphone, puis acceptez dans Brise." } else { "Code {code}: check that the phone shows the same code, then accept in Brise." },
         "still_running_title" => if fr { "Brise reste actif" } else { "Brise keeps running" },
