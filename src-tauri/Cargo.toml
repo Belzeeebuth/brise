@@ -1,6 +1,6 @@
 [package]
 name = "brise"
-version = "0.4.0"
+version = "0.5.0"
 description = "Partagez vos fichiers entre votre PC et votre téléphone"
 authors = ["ana"]
 edition = "2021"

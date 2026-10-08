@@ -1,6 +1,6 @@
 {
   "name": "brise",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "private": true,
   "description": "Partage de fichiers entre un PC Linux et n’importe quel téléphone, par QR code.",
   "scripts": {

@@ -1,0 +1,94 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.belzeeebuth.brise</id>
+  <name>Brise</name>
+  <summary>Partagez vos fichiers avec votre téléphone</summary>
+  <summary xml:lang="en">Share files with your phone</summary>
+  <developer id="io.github.belzeeebuth">
+    <name>ana</name>
+  </developer>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <description>
+    <p>Brise transfère des fichiers, des photos et des textes entre votre PC et n’importe quel téléphone, iPhone ou Android, sans rien installer sur le téléphone : un QR code suffit.</p>
+    <p xml:lang="en">Brise transfers files, photos and text between your computer and any phone, iPhone or Android, with nothing to install on the phone: a QR code is enough.</p>
+    <ul>
+      <li>Du PC au téléphone par glisser-déposer, du téléphone au PC depuis sa page web, avec reprise automatique après une coupure.</li>
+      <li xml:lang="en">Computer to phone by drag and drop, phone to computer from its web page, resuming automatically after a dropped connection.</li>
+      <li>Un téléphone accepté reste connu et se reconnecte sans rescanner ; ajoutez la page à l’écran d’accueil pour l’ouvrir comme une appli.</li>
+      <li xml:lang="en">An accepted phone stays known and reconnects without scanning again; add the page to the home screen to open it like an app.</li>
+      <li>Trois modes : réseau local, Internet (tunnel Cloudflare) ou point d’accès Wi-Fi créé par le PC.</li>
+      <li xml:lang="en">Three modes: local network, Internet (Cloudflare tunnel) or a Wi-Fi hotspot created by the computer.</li>
+      <li>Fonds d’écran dessinés pour Brise, thème clair ou sombre, interface en français et en anglais.</li>
+      <li xml:lang="en">Wallpapers drawn for Brise, light or dark theme, French and English interface.</li>
+    </ul>
+  </description>
+  <launchable type="desktop-id">io.github.belzeeebuth.brise.desktop</launchable>
+  <url type="homepage">https://github.com/Belzeeebuth/brise</url>
+  <url type="bugtracker">https://github.com/Belzeeebuth/brise/issues</url>
+  <url type="vcs-browser">https://github.com/Belzeeebuth/brise</url>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Connexion d’un téléphone par QR code</caption>
+      <caption xml:lang="en">Connecting a phone with a QR code</caption>
+      <image>https://raw.githubusercontent.com/Belzeeebuth/brise/v0.5.0/docs/screenshots/connexion.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Transferts en cours et fichiers reçus</caption>
+      <caption xml:lang="en">Transfers in progress and received files</caption>
+      <image>https://raw.githubusercontent.com/Belzeeebuth/brise/v0.5.0/docs/screenshots/transferts.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Galerie des photos reçues, thème sombre</caption>
+      <caption xml:lang="en">Gallery of received photos, dark theme</caption>
+      <image>https://raw.githubusercontent.com/Belzeeebuth/brise/v0.5.0/docs/screenshots/galerie.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Choix du fond d’écran</caption>
+      <caption xml:lang="en">Choosing a wallpaper</caption>
+      <image>https://raw.githubusercontent.com/Belzeeebuth/brise/v0.5.0/docs/screenshots/reglages.png</image>
+    </screenshot>
+  </screenshots>
+  <branding>
+    <color type="primary" scheme_preference="light">#9fd0e8</color>
+    <color type="primary" scheme_preference="dark">#1f3d4e</color>
+  </branding>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>Network</category>
+    <category>FileTransfer</category>
+    <category>Utility</category>
+  </categories>
+  <keywords>
+    <keyword>partage</keyword>
+    <keyword>fichiers</keyword>
+    <keyword>téléphone</keyword>
+    <keyword>QR</keyword>
+    <keyword xml:lang="en">share</keyword>
+    <keyword xml:lang="en">files</keyword>
+    <keyword xml:lang="en">phone</keyword>
+    <keyword xml:lang="en">airdrop</keyword>
+  </keywords>
+  <requires>
+    <display_length compare="ge">720</display_length>
+  </requires>
+  <supports>
+    <control>pointing</control>
+    <control>keyboard</control>
+    <control>touch</control>
+  </supports>
+  <releases>
+    <release version="0.5.0" date="2026-10-08">
+      <description>
+        <p>Appareils mémorisés, code à taper sans scanner, envoi de textes et de liens, galerie des photos reçues, lancement au démarrage, « Ouvrir avec Brise » dans le gestionnaire de fichiers, vitesse et temps restant des transferts.</p>
+        <p xml:lang="en">Remembered devices, a typed code instead of scanning, text and link sharing, a gallery for received photos, start at login, “Open with Brise” in the file manager, transfer speed and time left.</p>
+      </description>
+    </release>
+    <release version="0.4.0" date="2026-10-07">
+      <description>
+        <p>Nouveau design : fonds d’écran au choix, verre dépoli, accent qui suit le fond.</p>
+        <p xml:lang="en">New design: wallpapers to choose from, frosted glass, accent colour that follows the wallpaper.</p>
+      </description>
+    </release>
+  </releases>
+</component>

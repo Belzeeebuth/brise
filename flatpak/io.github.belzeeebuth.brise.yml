@@ -1,0 +1,50 @@
+id: io.github.belzeeebuth.brise
+runtime: org.gnome.Platform
+runtime-version: '48'
+sdk: org.gnome.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.rust-stable
+command: brise
+finish-args:
+  # Le téléphone se connecte au serveur intégré, sur le réseau local ou via Internet.
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Icône dans la barre système et notifications.
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --talk-name=org.freedesktop.Notifications
+  # Les fichiers reçus vont dans Téléchargements/Brise ; ceux glissés dans la
+  # fenêtre peuvent venir de n'importe où dans le dossier personnel (lecture).
+  - --filesystem=xdg-download
+  - --filesystem=home:ro
+  # Réglage « lancer à l'ouverture de session ».
+  - --filesystem=xdg-config/autostart:create
+  # Point d'accès Wi-Fi (nmcli) et mode Internet (cloudflared) : outils de l'hôte.
+  - --talk-name=org.freedesktop.Flatpak
+build-options:
+  append-path: /usr/lib/sdk/rust-stable/bin
+  env:
+    CARGO_HOME: /run/build/brise/cargo
+modules:
+  - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
+  - name: brise
+    buildsystem: simple
+    build-commands:
+      - cargo --offline fetch --manifest-path src-tauri/Cargo.toml --verbose
+      - cargo --offline build --release --manifest-path src-tauri/Cargo.toml
+      - install -Dm755 src-tauri/target/release/brise /app/bin/brise
+      - install -Dm644 flatpak/io.github.belzeeebuth.brise.desktop /app/share/applications/io.github.belzeeebuth.brise.desktop
+      - install -Dm644 src-tauri/io.github.belzeeebuth.brise.metainfo.xml /app/share/metainfo/io.github.belzeeebuth.brise.metainfo.xml
+      - install -Dm644 src-tauri/icons/32x32.png /app/share/icons/hicolor/32x32/apps/io.github.belzeeebuth.brise.png
+      - install -Dm644 src-tauri/icons/64x64.png /app/share/icons/hicolor/64x64/apps/io.github.belzeeebuth.brise.png
+      - install -Dm644 src-tauri/icons/128x128.png /app/share/icons/hicolor/128x128/apps/io.github.belzeeebuth.brise.png
+      - install -Dm644 src-tauri/icons/128x128@2x.png /app/share/icons/hicolor/256x256/apps/io.github.belzeeebuth.brise.png
+      - install -Dm644 src-tauri/icons/icon.png /app/share/icons/hicolor/512x512/apps/io.github.belzeeebuth.brise.png
+      - install -Dm644 ui/icon.svg /app/share/icons/hicolor/scalable/apps/io.github.belzeeebuth.brise.svg
+    sources:
+      - type: git
+        url: https://github.com/Belzeeebuth/brise.git
+        tag: v0.5.0
+      - cargo-sources.json

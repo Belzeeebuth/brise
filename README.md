@@ -8,9 +8,18 @@ un QR code suffit.
   partage actif, « Quitter Brise » dans le menu de l’icône l’arrête.
 - Notifications quand un téléphone demande à se connecter et quand un fichier
   arrive.
-- Partage depuis le PC par glisser-déposer ou « Parcourir… » : les fichiers
-  restent à leur place, sans copie.
-- Envois du téléphone par blocs, avec reprise automatique après une coupure.
+- Partage depuis le PC par glisser-déposer, « Parcourir… », ou « Ouvrir avec
+  Brise » dans le gestionnaire de fichiers : les fichiers restent à leur place,
+  sans copie.
+- Envois du téléphone par blocs, avec reprise automatique après une coupure ;
+  vitesse et temps restant affichés.
+- Textes et liens dans les deux sens, avec copie en un geste et ouverture des
+  liens.
+- Un téléphone accepté reste connu et se reconnecte sans rescanner ; un code
+  court affiché sous le QR permet de se connecter sans scanner, et la page
+  s’ajoute à l’écran d’accueil comme une appli.
+- Galerie des photos reçues avec visionneuse, lancement à l’ouverture de session
+  en option, raccourcis clavier.
 - Trois modes : réseau local, Internet (tunnel Cloudflare) et point d’accès
   Wi-Fi créé par le PC.
 - Interface en français et en anglais, selon la langue du système (et celle du
@@ -27,11 +36,23 @@ un QR code suffit.
 | Paquet | Pour | Taille |
 | --- | --- | --- |
 | `Brise_<version>_amd64.AppImage` | toutes les distributions | ~110 Mo (WebKitGTK inclus) |
-| `Brise_<version>_amd64.deb` | Debian, Ubuntu, Mint… | ~5 Mo |
-| `Brise-<version>-1.x86_64.rpm` | Fedora, openSUSE… | ~5 Mo |
+| `Brise_<version>_amd64.deb` | Debian, Ubuntu, Mint… | ~6 Mo |
+| `Brise-<version>-1.x86_64.rpm` | Fedora, openSUSE… | ~6 Mo |
 
-Les paquets sont produits par `npm run build` dans
-`src-tauri/target/release/bundle/`.
+Les paquets de chaque version sont dans les
+[releases GitHub](https://github.com/Belzeeebuth/brise/releases) ; `npm run
+build` les produit dans `src-tauri/target/release/bundle/`.
+
+Un paquet Flatpak (`io.github.belzeeebuth.brise`) se construit depuis le dossier
+`flatpak/` :
+
+```bash
+git submodule update --init
+flatpak-builder --user --install --force-clean build-flatpak flatpak/io.github.belzeeebuth.brise.yml
+```
+
+Dans le bac à sable, le point d’accès Wi-Fi et le mode Internet utilisent
+`nmcli` et `cloudflared` de l’hôte (`--talk-name=org.freedesktop.Flatpak`).
 
 Les paquets `.deb` et `.rpm` dépendent de WebKitGTK 4.1 et de
 libayatana-appindicator (icône de la barre système), présents sur la plupart des
@@ -54,11 +75,16 @@ npm run install-local   # ~/.local/bin/brise + entrée du lanceur d’applicatio
 3. Sur le téléphone, choisissez un nom puis touchez **Demander la connexion**.
 4. Comparez le code à six chiffres affiché sur les deux appareils et acceptez
    dans Brise. Une notification signale la demande même si la fenêtre est fermée.
+   Le téléphone reste ensuite connu : il se reconnecte en rouvrant la page, sans
+   rescanner. Sans appareil photo, tapez le code court affiché sous le QR après
+   avoir ouvert l’adresse du PC dans le navigateur.
 5. **PC → téléphone** : glissez des fichiers dans la fenêtre ou cliquez sur
    **Parcourir…**, puis ouvrez **Recevoir** sur le téléphone.
 6. **Téléphone → PC** : ouvrez **Envoyer au PC** et choisissez vos fichiers.
    Si l’écran se verrouille ou si la connexion saute, l’envoi reprend là où il
    s’était arrêté en revenant sur la page.
+7. **Textes et liens** : **Texte** sur le PC (ou Ctrl+V dans la fenêtre) et
+   **Envoyer un texte** sur le téléphone ; chaque côté peut copier ou ouvrir.
 
 Les fichiers reçus vont dans `Brise`, à l’intérieur du dossier de
 téléchargements XDG (par défaut `~/Téléchargements/Brise`). **Historique**
@@ -127,7 +153,11 @@ l’interface et le réseau à votre machine.
 | `BRISE_PORT` | Port d’écoute, par défaut `53318` |
 | `BRISE_ADDRESS` | Adresse IPv4 fixe à encoder dans le QR (sinon suivie automatiquement) |
 | `BRISE_RECEIVE_DIR` | Dossier de réception |
-| `BRISE_DATA_DIR` | Historique, réglages et image de fond (`~/.local/share/brise` par défaut) |
+| `BRISE_DATA_DIR` | Historique, appareils connus, textes reçus, réglages et image de fond (`~/.local/share/brise` par défaut) |
+
+`brise fichier1 fichier2…` ajoute des fichiers au partage, y compris si Brise
+tourne déjà ; `brise --hidden` démarre dans la barre système sans ouvrir la
+fenêtre (c’est ce que fait le lancement à l’ouverture de session).
 
 ## Développement
 
@@ -152,7 +182,10 @@ Organisation :
   l’interface ;
 - `i18n.rs` : langue du système et textes natifs (menu de l’icône, notifications) ;
 - `settings.rs` : réglages persistants (`settings.json`), image de fond
-  personnelle et calcul de sa couleur d’accent ;
+  personnelle et calcul de sa couleur d’accent, démarrage automatique ;
+- `flatpak/` : manifeste Flatpak, sources cargo hors ligne et fichier .desktop
+  de l’identifiant `io.github.belzeeebuth.brise` ; les métadonnées AppStream
+  sont dans `src-tauri/io.github.belzeeebuth.brise.metainfo.xml` ;
 - `ui/` : interface du PC (`index.html`, `desktop.js`, `desktop.css`) et du
   téléphone (`phone.html`, `phone.js`, `phone.css`). En commun : `styles.css`
   (thèmes et composants), `common.js`, `i18n.js` (textes français et anglais,

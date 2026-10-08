@@ -1,0 +1,15 @@
+[Desktop Entry]
+Type=Application
+Name=Brise
+GenericName=Partage de fichiers
+GenericName[en]=File sharing
+Comment=Partagez vos fichiers avec votre téléphone
+Comment[en]=Share files with your phone
+Exec=brise %F
+Icon=io.github.belzeeebuth.brise
+Terminal=false
+Categories=Network;FileTransfer;Utility;
+Keywords=partage;fichiers;airdrop;QR;téléphone;share;files;phone;
+StartupWMClass=brise
+StartupNotify=true
+MimeType=image/jpeg;image/png;image/gif;image/webp;image/heic;image/heif;image/avif;image/bmp;image/svg+xml;image/tiff;video/mp4;video/quicktime;video/x-matroska;video/webm;video/x-msvideo;video/3gpp;audio/mpeg;audio/mp4;audio/x-wav;audio/flac;audio/ogg;audio/x-m4a;application/pdf;application/zip;application/x-7z-compressed;application/vnd.rar;application/x-rar;application/gzip;application/x-tar;application/x-xz;application/x-bzip2;text/plain;text/markdown;text/csv;text/html;application/json;application/xml;application/epub+zip;application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;application/vnd.openxmlformats-officedocument.presentationml.presentation;application/vnd.oasis.opendocument.text;application/vnd.oasis.opendocument.spreadsheet;application/vnd.oasis.opendocument.presentation;application/msword;application/vnd.ms-excel;application/vnd.ms-powerpoint;application/vnd.android.package-archive;application/x-iso9660-image;application/octet-stream;

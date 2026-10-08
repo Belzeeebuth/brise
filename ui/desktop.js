@@ -377,7 +377,7 @@ function settingsPaneHtml() {
       return `<div class="setting"><label class="toggle"><input type="checkbox" id="autostart-toggle" ${state.autostart ? 'checked' : ''}><span class="toggle-text"><strong>${escape(t('settings.autostart'))}</strong><span>${escape(t('settings.autostart_text'))}</span></span></label><p class="hint">${icon('info')}<span>${escape(t('settings.open_with'))}</span></p></div>
         <div class="setting"><h3>${escape(t('settings.quit'))}</h3><p>${escape(t('settings.quit_text'))}</p><div><button class="button danger" data-action="quit-confirm">${icon('power')}${escape(t('settings.quit_button'))}</button></div></div>`;
     default:
-      return `<div class="about"><img src="icon.svg" alt=""><div><strong>${escape(t('settings.version', { version: state.version }))}</strong><p>${escape(t('settings.about_text'))}</p></div></div><p class="hint">${icon('info')}<span>${escape(t('help.shortcuts.text'))}</span></p>`;
+      return `<div class="about"><img src="icon.svg" alt=""><div><strong>${escape(t('settings.version', { version: state.version }))}</strong><p>${escape(t('settings.about_text'))}</p></div></div><p><a class="link-button" href="https://github.com/Belzeeebuth/brise" target="_blank" rel="noreferrer">${icon('open')}${escape(t('settings.credits'))}</a></p><p class="hint">${icon('info')}<span>${escape(t('help.shortcuts.text'))}</span></p>`;
   }
 }
 function renderSettingsPane() {

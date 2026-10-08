@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Brise",
-  "version": "0.4.0",
-  "identifier": "fr.brise.Brise",
+  "version": "0.5.0",
+  "identifier": "io.github.belzeeebuth.brise",
   "build": {
     "frontendDist": "../ui"
   },
