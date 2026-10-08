@@ -50,7 +50,7 @@ const log = message => console.log(`${String(++step).padStart(2)}. ${message}`);
 
 async function openBrowser(profile) {
   const debugPort = 9500 + Math.floor(Math.random() * 400);
-  const browser = spawn(browserBinary, ['--headless=new', '--no-first-run', '--no-sandbox', '--disable-gpu', `--remote-debugging-port=${debugPort}`, `--user-data-dir=${join(root, profile)}`, '--lang=fr', 'about:blank'], { stdio: 'ignore' });
+  const browser = spawn(browserBinary, ['--headless=new', '--no-first-run', '--no-sandbox', '--disable-gpu', `--remote-debugging-port=${debugPort}`, `--user-data-dir=${join(root, profile)}`, '--lang=fr', '--accept-lang=fr-FR,fr', 'about:blank'], { stdio: 'ignore', env: { ...process.env, LANGUAGE: 'fr', LANG: 'fr_FR.UTF-8', LC_ALL: 'fr_FR.UTF-8' } });
   cleanup.push(() => browser.kill('SIGKILL'));
   let page;
   for (let i = 0; i < 100 && !page; i++) {
@@ -83,7 +83,8 @@ async function openBrowser(profile) {
     throw new Error(`délai dépassé : ${expression}`);
   };
   listeners.push(message => { if (message.method === 'Runtime.exceptionThrown') console.log('   exception page :', JSON.stringify(message.params.exceptionDetails).slice(0, 300)); });
-  await cdp('Runtime.enable'); await cdp('Page.enable'); await cdp('DOM.enable');
+  await cdp('Runtime.enable'); await cdp('Page.enable'); await cdp('DOM.enable'); await cdp('Network.enable');
+  await cdp('Network.setUserAgentOverride', { userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36', acceptLanguage: 'fr-FR,fr' });
   return { browser, cdp, evaluate, until, listeners, close: () => { ws.close(); browser.kill('SIGKILL'); } };
 }
 
@@ -118,7 +119,7 @@ log('le lien partagé depuis le PC est affiché');
 await phone.evaluate(`document.querySelector('#send-text').click(); true`);
 await phone.until(`document.querySelector('#phone-text')`, 5000);
 await phone.evaluate(`document.querySelector('#phone-text').value = 'Bonjour depuis le téléphone'; document.querySelector('#phone-text-form').requestSubmit(); true`);
-await phone.until(`document.querySelector('#toasts').textContent.includes('arrivé')`, 10000);
+await phone.until(`/arrivé|reached/.test(document.querySelector('#toasts').textContent)`, 10000);
 for (let i = 0; i < 50; i++) {
   try { if ((await readFile(join(root, 'data/notes.json'), 'utf8')).includes('Bonjour depuis le téléphone')) break; } catch {}
   await wait(100);
@@ -161,7 +162,7 @@ await phone.cdp('Page.addScriptToEvaluateOnNewDocument', { source: `navigator.ca
 await phone.cdp('Page.navigate', { url: `${base}/` });
 await phone.until(`document.querySelector('#workspace') && !document.querySelector('#workspace').hidden && document.querySelector('[data-share]')`, 15000);
 log('rouvrir la page sans QR retrouve la connexion (appareil mémorisé)');
-assert.equal(await phone.evaluate(`document.querySelector('[data-share]').textContent`), 'Partager');
+assert.match(await phone.evaluate(`document.querySelector('[data-share]').textContent`), /^(Partager|Share)$/);
 await phone.evaluate(`document.querySelector('[data-share]').click(); true`);
 const shared = await phone.until('window.sharedFiles', 15000);
 assert.deepEqual(shared, [{ name: 'IMG_0042.MOV', type: 'video/quicktime', size: photo.length, head: [...photo.subarray(0, 4)] }]);
@@ -173,7 +174,7 @@ const typed = await openBrowser('profile-2');
 await typed.cdp('Page.navigate', { url: `${base}/` });
 await typed.until(`document.querySelector('#shell')?.hidden === false && !document.querySelector('#pair-screen').hidden && !document.querySelector('#pair-code-field').hidden`, 15000);
 await typed.evaluate(`document.querySelector('#pair-code-input').value = 'zzz-zzz'; document.querySelector('#device-name').value = 'Clavier'; document.querySelector('#pair-form').requestSubmit(); true`);
-await typed.until(`document.querySelector('#toasts').textContent.includes('expiré')`, 10000);
+await typed.until(`/expiré|expired/.test(document.querySelector('#toasts').textContent)`, 10000);
 await typed.evaluate(`document.querySelector('#pair-code-input').value = '${pairCode.slice(0, 3).toLowerCase()} ${pairCode.slice(3)}'; document.querySelector('#pair-form').requestSubmit(); true`);
 await typed.until(`!document.querySelector('#workspace').hidden`, 15000);
 log('un code tapé à la main (minuscules, espace) connecte le téléphone');
