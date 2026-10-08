@@ -10,6 +10,12 @@ rust-version = "1.85"
 name = "brise_lib"
 crate-type = ["rlib"]
 
+[features]
+default = ["gtk-dialogs"]
+# Dialogues GTK ; le Flatpak passe par le portail du système (portal-dialogs).
+gtk-dialogs = ["tauri-plugin-dialog/gtk3"]
+portal-dialogs = ["tauri-plugin-dialog/xdg-portal"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -17,7 +23,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "image-png", "protocol-asset"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"
-tauri-plugin-dialog = "2"
+tauri-plugin-dialog = { version = "2", default-features = false }
 tauri-plugin-opener = "2"
 tauri-plugin-clipboard-manager = "2"
 serde = { version = "1", features = ["derive"] }

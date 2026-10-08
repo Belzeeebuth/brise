@@ -21,7 +21,7 @@ jobs:
     name: Construire le Flatpak depuis ce commit
     runs-on: ubuntu-24.04
     container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-50
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
       options: --privileged
     steps:
       - uses: actions/checkout@v4
@@ -37,6 +37,7 @@ jobs:
           bundle: Brise.flatpak
           manifest-path: flatpak/io.github.belzeeebuth.brise.yml
           cache-key: flatpak-builder-${{ github.sha }}
+          mirror-screenshots-url: https://dl.flathub.org/media
       - name: Linter de Flathub
         continue-on-error: true
         run: |

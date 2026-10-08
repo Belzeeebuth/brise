@@ -1,6 +1,6 @@
 id: io.github.belzeeebuth.brise
 runtime: org.gnome.Platform
-runtime-version: '50'
+runtime-version: '51'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
@@ -16,10 +16,11 @@ finish-args:
   # Icône dans la barre système et notifications.
   - --talk-name=org.kde.StatusNotifierWatcher
   - --talk-name=org.freedesktop.Notifications
-  # Les fichiers reçus vont dans Téléchargements/Brise ; ceux glissés dans la
-  # fenêtre peuvent venir de n'importe où dans le dossier personnel (lecture).
+  # Les fichiers reçus vont dans Téléchargements/Brise. Les fichiers à partager
+  # arrivent par le portail (sélecteur, glisser-déposer, « Ouvrir avec »).
   - --filesystem=xdg-download
-  - --filesystem=home:ro
+  # « Afficher dans le dossier » ouvre le gestionnaire de fichiers.
+  - --talk-name=org.freedesktop.FileManager1
   # Point d'accès Wi-Fi : Brise crée et retire son profil par D-Bus.
   - --system-talk-name=org.freedesktop.NetworkManager
 modules:
@@ -54,7 +55,7 @@ modules:
         CARGO_HOME: /run/build/brise/cargo
     build-commands:
       - cargo --offline fetch --manifest-path src-tauri/Cargo.toml --verbose
-      - cargo --offline build --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol
+      - cargo --offline build --release --manifest-path src-tauri/Cargo.toml --no-default-features --features portal-dialogs,tauri/custom-protocol
       - install -Dm755 src-tauri/target/release/brise /app/bin/brise
       - install -Dm644 flatpak/io.github.belzeeebuth.brise.desktop /app/share/applications/io.github.belzeeebuth.brise.desktop
       - install -Dm644 src-tauri/io.github.belzeeebuth.brise.metainfo.xml /app/share/metainfo/io.github.belzeeebuth.brise.metainfo.xml
