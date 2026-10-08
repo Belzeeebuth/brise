@@ -7,6 +7,7 @@
     "dev": "tauri dev",
     "build": "tauri build",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml",
+    "test:e2e": "cargo build --manifest-path src-tauri/Cargo.toml --example e2e_server && node tests/e2e/phone.mjs",
     "install-local": "scripts/install-local.sh"
   },
   "devDependencies": {

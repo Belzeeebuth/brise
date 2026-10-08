@@ -19,7 +19,7 @@ async fn main() {
     }
     let port = app.network.lock().unwrap().port;
     let (token, _) = app.brise.pair_token();
-    println!("{}", serde_json::json!({ "port": port, "pairUrl": format!("http://127.0.0.1:{port}/connect#{token}") }));
+    println!("{}", serde_json::json!({ "port": port, "pairUrl": format!("http://127.0.0.1:{port}/connect#{token}"), "pairCode": app.brise.pair_code() }));
     loop {
         for device in app.brise.desktop_view().devices {
             if device["status"] == "pending" {

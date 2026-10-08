@@ -132,10 +132,16 @@ l’interface et le réseau à votre machine.
 ## Développement
 
 ```bash
-npm run dev      # fenêtre de développement
-npm test         # tests Rust : cœur, HTTP, modes de connexion
-npm run build    # binaire optimisé et paquets
+npm run dev       # fenêtre de développement
+npm test          # tests Rust : cœur, HTTP, modes de connexion, réglages
+npm run test:e2e  # page du téléphone pilotée par un Chromium sans fenêtre
+npm run build     # binaire optimisé et paquets
 ```
+
+`scripts/shots.mjs` capture l’interface du PC sans ouvrir de fenêtre, avec un
+état fictif, pour vérifier un changement de style. Sur GitHub, chaque commit
+lance les tests (`.github/workflows/tests.yml`) et chaque tag `v*` construit
+les paquets et publie la release (`release.yml`).
 
 Organisation :
 - `src-tauri/src/core.rs` : appareils, fichiers, envois par blocs, historique ;
@@ -156,5 +162,5 @@ Organisation :
   `scripts/wallpapers.py`, à relancer après toute retouche).
 
 `src-tauri/examples/e2e_server.rs` lance le serveur seul et accepte
-automatiquement les téléphones, pour tester la page du téléphone dans un
-navigateur.
+automatiquement les téléphones ; `tests/e2e/phone.mjs` s’en sert pour rejouer
+l’association, les envois avec coupures, les textes et le code tapé à la main.

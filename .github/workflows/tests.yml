@@ -1,0 +1,36 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    name: Rust, clippy et bout en bout
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Dépendances système (WebKitGTK, appindicator)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libgtk-3-dev libssl-dev patchelf
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Clippy
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+      - name: Tests Rust
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Test de bout en bout de la page du téléphone
+        env:
+          BRISE_BROWSER: /usr/bin/google-chrome
+        run: |
+          cargo build --manifest-path src-tauri/Cargo.toml --example e2e_server
+          node tests/e2e/phone.mjs
