@@ -1,7 +1,7 @@
 [
   {
     "dest": "vendor",
-    "path": "modules.txt",
+    "path": "cloudflared/modules.txt",
     "type": "file"
   },
   {

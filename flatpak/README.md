@@ -38,8 +38,9 @@ manifeste, puis, depuis une copie de cloudflared à ce tag,
 ```bash
 go install github.com/dennwc/flatpak-go-mod@latest
 flatpak-go-mod -json -out sortie chemin/vers/cloudflared
-cp sortie/go.mod.json flatpak/cloudflared/sources.json
+sed 's|"path": "modules.txt"|"path": "cloudflared/modules.txt"|' sortie/go.mod.json > flatpak/cloudflared/sources.json
 cp sortie/modules.txt flatpak/cloudflared/modules.txt
 ```
 
+Les chemins des sources incluses se lisent depuis le manifeste, d’où le `sed`.
 Penser aussi à la version passée à `-X main.Version=` dans le manifeste.
