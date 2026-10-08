@@ -42,6 +42,7 @@ jobs:
         run: |
           flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak install --user -y --noninteractive flathub org.flatpak.Builder
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git checkout flatpak/io.github.belzeeebuth.brise.yml
           echo "::group::manifeste"
           flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest flatpak/io.github.belzeeebuth.brise.yml || true
