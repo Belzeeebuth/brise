@@ -16,17 +16,17 @@ fn arguments_give_files_to_share_and_the_hidden_flag() {
     assert_eq!(paths, vec![file]);
 }
 
-#[test]
-fn autostart_writes_and_removes_a_desktop_entry() {
+#[tokio::test]
+async fn autostart_writes_and_removes_a_desktop_entry() {
     let dir = tempfile::tempdir().unwrap();
     std::env::set_var("XDG_CONFIG_HOME", dir.path());
     assert!(!autostart_enabled());
-    set_autostart(true).unwrap();
+    set_autostart(true, "test").await.unwrap();
     assert!(autostart_enabled());
     let entry = std::fs::read_to_string(dir.path().join("autostart/brise.desktop")).unwrap();
     assert!(entry.contains("--hidden"), "{entry}");
     assert!(entry.starts_with("[Desktop Entry]"));
-    set_autostart(false).unwrap();
-    set_autostart(false).unwrap();
+    set_autostart(false, "test").await.unwrap();
+    set_autostart(false, "test").await.unwrap();
     assert!(!autostart_enabled());
 }

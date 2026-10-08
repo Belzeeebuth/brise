@@ -29,17 +29,29 @@ jobs:
           submodules: true
       - name: Utiliser le code de ce commit plutôt que celui du tag
         run: |
-          sed -i \
-            -e 's|^      - type: git$|      - type: dir|' \
-            -e 's|^        url: https://github.com/Belzeeebuth/brise.git$|        path: ..|' \
-            -e 's|^        tag: v.*$|        skip: [.flatpak-builder, flatpak_app, repo, .git, src-tauri/target, node_modules, .scratch]|' \
-            flatpak/io.github.belzeeebuth.brise.yml
-          grep -A3 'type: dir' flatpak/io.github.belzeeebuth.brise.yml
+          sed -z -i 's|      - type: git\n        url: https://github.com/Belzeeebuth/brise.git\n        tag: [^\n]*\n|      - type: dir\n        path: ..\n        skip: [.flatpak-builder, flatpak_app, repo, .git, src-tauri/target, node_modules, .scratch]\n|' flatpak/io.github.belzeeebuth.brise.yml
+          grep -B1 -A3 'type: dir' flatpak/io.github.belzeeebuth.brise.yml
+          grep -q 'type: dir' flatpak/io.github.belzeeebuth.brise.yml
       - uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
         with:
           bundle: Brise.flatpak
           manifest-path: flatpak/io.github.belzeeebuth.brise.yml
           cache-key: flatpak-builder-${{ github.sha }}
+      - name: Linter de Flathub
+        continue-on-error: true
+        run: |
+          flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y --noninteractive flathub org.flatpak.Builder
+          git checkout flatpak/io.github.belzeeebuth.brise.yml
+          echo "::group::manifeste"
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder manifest flatpak/io.github.belzeeebuth.brise.yml || true
+          echo "::endgroup::"
+          echo "::group::métadonnées AppStream"
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder appstream src-tauri/io.github.belzeeebuth.brise.metainfo.xml || true
+          echo "::endgroup::"
+          echo "::group::dépôt construit"
+          flatpak run --command=flatpak-builder-lint org.flatpak.Builder repo repo || true
+          echo "::endgroup::"
       - name: Joindre le Flatpak à la release
         if: inputs.release != ''
         uses: softprops/action-gh-release@v2

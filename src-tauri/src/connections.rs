@@ -26,23 +26,17 @@ pub struct Gateway {
     pub handle: tokio::task::JoinHandle<()>,
 }
 
-/// Commande lancée sur le système ; depuis Flatpak, elle passe par l'hôte
-/// (nmcli et cloudflared ne sont pas dans le bac à sable).
-pub fn host_command(program: &str) -> Command {
-    if std::env::var_os("FLATPAK_ID").is_some() {
-        let mut command = Command::new("flatpak-spawn");
-        command.arg("--host").arg(program);
-        command
-    } else {
-        Command::new(program)
-    }
-}
-
+/// Lance les commandes système ; `nmcli` passe par D-Bus (voir `nm.rs`).
 pub fn system_runner() -> Runner {
     Arc::new(|command: &str, args: Vec<String>| {
         let command = command.to_string();
         Box::pin(async move {
-            let output = tokio::time::timeout(Duration::from_secs(45), host_command(&command).args(&args).env("LC_ALL", "C").stdin(Stdio::null()).output())
+            if command == "nmcli" {
+                return tokio::time::timeout(Duration::from_secs(45), crate::nm::nmcli(&args))
+                    .await
+                    .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, "NetworkManager ne répond pas"))?;
+            }
+            let output = tokio::time::timeout(Duration::from_secs(45), Command::new(&command).args(&args).env("LC_ALL", "C").stdin(Stdio::null()).output())
                 .await
                 .map_err(|_| io::Error::new(io::ErrorKind::TimedOut, format!("{command} ne répond pas")))??;
             if !output.status.success() {
@@ -366,7 +360,7 @@ impl Connections {
             .open(&config)
             .and_then(|mut f| io::Write::write_all(&mut f, b"{}\n"))
             .map_err(|_| "tunnel_prepare_failed".to_string())?;
-        let mut command = host_command(&self.cloudflared);
+        let mut command = Command::new(&self.cloudflared);
         command
             .arg("tunnel")
             .arg("--config")

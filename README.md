@@ -51,8 +51,9 @@ git submodule update --init
 flatpak-builder --user --install --force-clean build-flatpak flatpak/io.github.belzeeebuth.brise.yml
 ```
 
-Dans le bac à sable, le point d’accès Wi-Fi et le mode Internet utilisent
-`nmcli` et `cloudflared` de l’hôte (`--talk-name=org.freedesktop.Flatpak`).
+Le Flatpak est autonome : il embarque `cloudflared` (compilé depuis ses
+sources) pour le mode Internet, parle à NetworkManager par D-Bus pour le point
+d’accès, et demande le lancement à l’ouverture de session au portail du système.
 
 Les paquets `.deb` et `.rpm` dépendent de WebKitGTK 4.1 et de
 libayatana-appindicator (icône de la barre système), présents sur la plupart des
@@ -108,7 +109,7 @@ est en HTTP : à utiliser sur un réseau de confiance.
 **Internet.** Le téléphone peut être en 4G/5G ou sur un autre Wi-Fi. Brise lance
 un [Cloudflare Quick Tunnel](https://developers.cloudflare.com/tunnel/get-started/quick-tunnels/)
 (adresse temporaire `trycloudflare.com`, sans compte). Installez d’abord
-`cloudflared` (`sudo pacman -S cloudflared`). HTTPS protège les liaisons, **sans
+`cloudflared` (`sudo pacman -S cloudflared`), déjà inclus dans le Flatpak. HTTPS protège les liaisons, **sans
 chiffrement de bout en bout vis-à-vis de Cloudflare**. Le tunnel n’expose que les
 pages du téléphone, sur une écoute séparée. Ce service gratuit ne garantit pas
 sa disponibilité.

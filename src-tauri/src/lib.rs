@@ -2,6 +2,7 @@ pub mod connections;
 pub mod core;
 pub mod i18n;
 pub mod network;
+pub mod nm;
 pub mod server;
 pub mod settings;
 
@@ -284,8 +285,8 @@ async fn pick_wallpaper(handle: AppHandle, app: Shared<'_>) -> Reply<bool> {
 }
 
 #[tauri::command]
-fn set_autostart_enabled(enabled: bool) -> Reply<bool> {
-    set_autostart(enabled)?;
+async fn set_autostart_enabled(app: Shared<'_>, enabled: bool) -> Reply<bool> {
+    set_autostart(enabled, tr(app.lang, "autostart_reason")).await?;
     Ok(autostart_enabled())
 }
 
@@ -498,6 +499,9 @@ pub fn run() {
             let quit = MenuItem::with_id(tauri_app, "quit", tr(lang, "tray_quit"), true, None::<&str>)?;
             let menu = Menu::with_items(tauri_app, &[&open, &quit])?;
             let mut tray = TrayIconBuilder::with_id("brise").tooltip("Brise").menu(&menu).show_menu_on_left_click(false);
+            if let (Some(id), Some(runtime)) = (std::env::var_os("FLATPAK_ID"), dirs::runtime_dir()) {
+                tray = tray.temp_dir_path(runtime.join("app").join(id).join("tray-icon"));
+            }
             if let Some(icon) = tauri_app.default_window_icon() {
                 tray = tray.icon(icon.clone());
             }

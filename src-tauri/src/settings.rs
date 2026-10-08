@@ -122,20 +122,23 @@ impl Store {
     }
 }
 
-/// Fichier .desktop de démarrage automatique (XDG autostart).
+pub fn in_flatpak() -> bool {
+    std::env::var_os("FLATPAK_ID").is_some()
+}
+
+/// Fichier .desktop de démarrage automatique (XDG autostart). Sous Flatpak, le
+/// portail écrit lui-même ce fichier hors du bac à sable : Brise garde seulement
+/// une marque dans son propre dossier de configuration.
 fn autostart_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join("autostart").join("brise.desktop"))
+    dirs::config_dir().map(|dir| if in_flatpak() { dir.join("brise-autostart") } else { dir.join("autostart").join("brise.desktop") })
 }
 
 pub fn autostart_enabled() -> bool {
     autostart_path().is_some_and(|path| path.is_file())
 }
 
-/// Commande qui relance Brise tel qu'il est installé : Flatpak, AppImage ou binaire.
+/// Commande qui relance Brise tel qu'il est installé : AppImage ou binaire.
 fn launch_command() -> String {
-    if let Ok(id) = std::env::var("FLATPAK_ID") {
-        return format!("flatpak run {id}");
-    }
     if let Ok(appimage) = std::env::var("APPIMAGE") {
         return quote(&appimage);
     }
@@ -150,8 +153,47 @@ fn quote(value: &str) -> String {
     }
 }
 
-pub fn set_autostart(enabled: bool) -> Result<(), AppError> {
+/// Demande au portail « Arrière-plan » de lancer (ou non) Brise à l'ouverture
+/// de session, avec `--hidden`.
+async fn request_background(enabled: bool, reason: &str) -> Result<(), AppError> {
+    use futures_util::StreamExt;
+    use std::collections::HashMap;
+    use zbus::zvariant::{OwnedObjectPath, OwnedValue, Value};
+    let failed = |_| AppError::new(500, "autostart_failed");
+    let bus = zbus::Connection::session().await.map_err(failed)?;
+    let sender = bus.unique_name().ok_or_else(|| AppError::new(500, "autostart_failed"))?.trim_start_matches(':').replace('.', "_");
+    let token = format!("brise{}", rand::random::<u32>());
+    let request_path = format!("/org/freedesktop/portal/desktop/request/{sender}/{token}");
+    let request = zbus::Proxy::new(&bus, "org.freedesktop.portal.Desktop", request_path, "org.freedesktop.portal.Request").await.map_err(failed)?;
+    let mut responses = request.receive_signal("Response").await.map_err(failed)?;
+    let portal = zbus::Proxy::new(&bus, "org.freedesktop.portal.Desktop", "/org/freedesktop/portal/desktop", "org.freedesktop.portal.Background").await.map_err(failed)?;
+    let mut options: HashMap<&str, Value> = HashMap::new();
+    options.insert("handle_token", Value::from(token.as_str()));
+    options.insert("reason", Value::from(reason));
+    options.insert("autostart", Value::from(enabled));
+    options.insert("commandline", Value::from(vec!["brise", "--hidden"]));
+    options.insert("dbus-activatable", Value::from(false));
+    let _: OwnedObjectPath = portal.call("RequestBackground", &("", options)).await.map_err(failed)?;
+    let message = tokio::time::timeout(std::time::Duration::from_secs(120), responses.next()).await.map_err(|_| AppError::new(500, "autostart_failed"))?.ok_or_else(|| AppError::new(500, "autostart_failed"))?;
+    let (response, results): (u32, HashMap<String, OwnedValue>) = message.body().deserialize().map_err(failed)?;
+    let granted = results.get("autostart").and_then(|v| bool::try_from(v.clone()).ok()).unwrap_or(false);
+    if response != 0 || (enabled && !granted) {
+        return Err(AppError::new(403, "autostart_refused"));
+    }
+    Ok(())
+}
+
+pub async fn set_autostart(enabled: bool, reason: &str) -> Result<(), AppError> {
     let path = autostart_path().ok_or_else(|| AppError::new(500, "autostart_failed"))?;
+    if in_flatpak() {
+        request_background(enabled, reason).await?;
+        let marked = if enabled {
+            path.parent().map_or(Ok(()), std::fs::create_dir_all).and_then(|_| std::fs::write(&path, b""))
+        } else {
+            std::fs::remove_file(&path).or_else(|e| if e.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(e) })
+        };
+        return marked.map_err(|_| AppError::new(500, "autostart_failed"));
+    }
     if !enabled {
         return match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),

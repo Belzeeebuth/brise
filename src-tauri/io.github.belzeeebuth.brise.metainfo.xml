@@ -77,6 +77,12 @@
     <control>touch</control>
   </supports>
   <releases>
+    <release version="0.5.1" date="2026-10-08">
+      <description>
+        <p>Le Flatpak devient autonome : le mode Internet embarque cloudflared, le point d’accès Wi-Fi parle directement à NetworkManager, le lancement à l’ouverture de session passe par le portail du système.</p>
+        <p xml:lang="en">The Flatpak is now self-contained: Internet mode bundles cloudflared, the Wi-Fi hotspot talks to NetworkManager directly, and starting at login goes through the system portal.</p>
+      </description>
+    </release>
     <release version="0.5.0" date="2026-10-08">
       <description>
         <p>Appareils mémorisés, code à taper sans scanner, envoi de textes et de liens, galerie des photos reçues, lancement au démarrage, « Ouvrir avec Brise » dans le gestionnaire de fichiers, vitesse et temps restant des transferts.</p>

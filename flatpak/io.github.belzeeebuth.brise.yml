@@ -4,6 +4,7 @@ runtime-version: '50'
 sdk: org.gnome.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.rust-stable
+  - org.freedesktop.Sdk.Extension.golang
 command: brise
 finish-args:
   # Le téléphone se connecte au serveur intégré, sur le réseau local ou via Internet.
@@ -19,18 +20,38 @@ finish-args:
   # fenêtre peuvent venir de n'importe où dans le dossier personnel (lecture).
   - --filesystem=xdg-download
   - --filesystem=home:ro
-  # Réglage « lancer à l'ouverture de session ».
-  - --filesystem=xdg-config/autostart:create
-  # Point d'accès Wi-Fi (nmcli) et mode Internet (cloudflared) : outils de l'hôte.
-  - --talk-name=org.freedesktop.Flatpak
-build-options:
-  append-path: /usr/lib/sdk/rust-stable/bin
-  env:
-    CARGO_HOME: /run/build/brise/cargo
+  # Point d'accès Wi-Fi : Brise crée et retire son profil par D-Bus.
+  - --system-talk-name=org.freedesktop.NetworkManager
 modules:
   - shared-modules/libayatana-appindicator/libayatana-appindicator-gtk3.json
+  # Mode Internet : tunnel Cloudflare, compilé depuis ses sources (Apache-2.0).
+  - name: cloudflared
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/golang/bin
+      env:
+        GOFLAGS: -mod=vendor
+        GOPROXY: 'off'
+        GOTOOLCHAIN: local
+        CGO_ENABLED: '0'
+        GOCACHE: /run/build/cloudflared/go-cache
+        GOPATH: /run/build/cloudflared/go
+    build-commands:
+      - go build -trimpath -ldflags "-s -w -X main.Version=2026.10.0" -o /app/bin/cloudflared ./cmd/cloudflared
+      - install -Dm644 LICENSE /app/share/licenses/io.github.belzeeebuth.brise/cloudflared-LICENSE
+    sources:
+      - type: git
+        url: https://github.com/cloudflare/cloudflared.git
+        tag: 2026.10.0
+        commit: 18cdfe0a6fc7b72a0702d255a1f984e776ce0498
+      # Modules Go, produits par flatpak-go-mod depuis go.mod (voir flatpak/README.md).
+      - cloudflared/sources.json
   - name: brise
     buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/rust-stable/bin
+      env:
+        CARGO_HOME: /run/build/brise/cargo
     build-commands:
       - cargo --offline fetch --manifest-path src-tauri/Cargo.toml --verbose
       - cargo --offline build --release --manifest-path src-tauri/Cargo.toml --features tauri/custom-protocol
@@ -46,5 +67,5 @@ modules:
     sources:
       - type: git
         url: https://github.com/Belzeeebuth/brise.git
-        tag: v0.5.0
+        tag: v0.5.1
       - cargo-sources.json
