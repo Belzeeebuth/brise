@@ -10,7 +10,8 @@ let lastPairId = null, modeDraft = null, dialogKind = null;
 const keys = {};
 const seen = { shared: new Set(), received: new Set(), devices: new Set() };
 const qrCache = { pair: { key: '', src: '' }, wifi: { key: '', src: '' } };
-let approvedBefore = null, lookKey = '', settingsPane = 'appearance';
+let approvedBefore = null, lookKey = '', settingsPane = 'appearance', inboxView = 'list', lightboxId = null;
+try { inboxView = localStorage.getItem('brise-inbox-view') === 'grid' ? 'grid' : 'list'; } catch {}
 
 async function call(command, args) {
   try { return await invoke(command, args); }
@@ -152,7 +153,7 @@ function sharedRow(file, downloads) {
   const status = dl
     ? `<span class="status busy" data-percent-for="${dl.id}">${icon('download')}${percent}\u00a0%</span>`
     : file.downloads ? `<span class="status ok">${icon('check')}${escape(file.downloads > 1 ? t('file.downloaded_n', { count: file.downloads }) : t('file.downloaded'))}</span>` : `<span class="status">${escape(t('file.available'))}</span>`;
-  const meta = `<span>${formatSize(file.size)}</span>${dl ? `<span class="sep">·</span><span>${escape(t('file.downloading', { name: dl.sender }))}</span>` : ''}`;
+  const meta = `<span>${formatSize(file.size)}</span>${dl ? `<span class="sep">·</span><span>${escape(t('file.downloading', { name: dl.sender }))}</span><span data-rate="${dl.id}">${rateOf(dl.id, dl.bytes, dl.size) ? `<span class="sep">·</span>${escape(rateOf(dl.id, dl.bytes, dl.size))}` : ''}</span>` : ''}`;
   return `<div class="row shared${fresh(seen.shared, file.id)}" data-file="${file.id}">${media(file)}<div class="row-main"><span class="row-name" title="${escape(file.name)}">${escape(file.name)}</span><span class="row-meta">${meta}</span>${dl ? `<span data-progress="${dl.id}">${progressBar(percent, file.name)}</span>` : ''}</div>${status}<div class="row-actions"><button class="icon-button small" data-reveal="${file.id}" title="${escape(t('action.reveal'))}" aria-label="${escape(t('action.reveal'))}">${icon('folder')}</button><button class="icon-button small danger" data-remove="${file.id}" title="${escape(t('file.remove'))}" aria-label="${escape(`${t('file.remove')} : ${file.name}`)}">${icon('x')}</button></div></div>`;
 }
 function noteRow(note) {
@@ -162,7 +163,7 @@ function noteRow(note) {
     ? `<span>${escape(link ? t('text.link') : t('text.kind'))}</span>`
     : `<span>${escape(link ? t('text.link') : t('text.kind'))}</span><span class="sep">·</span><span>${escape(t('inbox.from', { name: note.sender }))}</span><span class="sep">·</span><span>${formatTime(note.createdAt)}</span>`;
   const actions = `<button class="icon-button small" data-copy="${note.id}" title="${escape(t('text.copy'))}" aria-label="${escape(t('text.copy'))}">${icon('copy')}</button>${link ? `<a class="icon-button small" href="${escape(note.text)}" target="_blank" rel="noreferrer" title="${escape(t('text.open'))}" aria-label="${escape(t('text.open'))}">${icon('open')}</a>` : ''}<button class="icon-button small danger" data-remove-note="${note.id}" title="${escape(outgoing ? t('text.remove') : t('text.delete'))}" aria-label="${escape(outgoing ? t('text.remove') : t('text.delete'))}">${icon('x')}</button>`;
-  return `<div class="row note clickable${fresh(outgoing ? seen.shared : seen.received, note.id)}" data-note="${note.id}"><span class="kind-tile kind-text">${icon('text')}</span><div class="row-main"><span class="row-name" title="${escape(notePreview(note.text))}">${escape(notePreview(note.text))}</span><span class="row-meta">${meta}</span></div><div class="row-actions">${actions}</div></div>`;
+  return `<div class="row text-row clickable${fresh(outgoing ? seen.shared : seen.received, note.id)}" data-note="${note.id}"><span class="kind-tile kind-text">${icon('text')}</span><div class="row-main"><span class="row-name" title="${escape(notePreview(note.text))}">${escape(notePreview(note.text))}</span><span class="row-meta">${meta}</span></div><div class="row-actions">${actions}</div></div>`;
 }
 function renderSend(approved) {
   $('#send-title').textContent = approved.length > 1 ? t('send.title_many') : t('send.title');
@@ -179,33 +180,70 @@ function renderSend(approved) {
 function incomingCard(transfer) {
   const percent = percentOf(transfer.bytes, transfer.size);
   const caption = transfer.paused ? t('inbox.paused', { name: transfer.sender }) : t('inbox.receiving', { name: transfer.sender });
-  return `<div class="incoming${transfer.paused ? ' paused' : ''}" data-transfer="${transfer.id}">${kindTile(transfer.name)}<div class="row-main"><span class="row-name">${escape(transfer.name)}</span><span class="row-meta"><span>${escape(caption)}</span><span class="sep">·</span><span data-bytes>${formatSize(transfer.bytes)} / ${formatSize(transfer.size)}</span></span><span data-progress="${transfer.id}">${progressBar(percent, transfer.name).replace('class="progress"', `class="progress${transfer.paused ? ' paused' : ''}"`)}</span></div><span class="status ${transfer.paused ? 'warn' : 'busy'}" data-percent>${transfer.paused ? icon('pause') : ''}${percent}\u00a0%</span></div>`;
+  return `<div class="incoming${transfer.paused ? ' paused' : ''}" data-transfer="${transfer.id}">${kindTile(transfer.name)}<div class="row-main"><span class="row-name">${escape(transfer.name)}</span><span class="row-meta"><span>${escape(caption)}</span><span class="sep">·</span><span data-bytes>${formatSize(transfer.bytes)} / ${formatSize(transfer.size)}</span><span data-rate="${transfer.id}">${rateText(transfer)}</span></span><span data-progress="${transfer.id}">${progressBar(percent, transfer.name).replace('class="progress"', `class="progress${transfer.paused ? ' paused' : ''}"`)}</span></div><span class="status ${transfer.paused ? 'warn' : 'busy'}" data-percent>${transfer.paused ? icon('pause') : ''}${percent}\u00a0%</span></div>`;
 }
 function receivedRow(file) {
   return `<div class="row clickable${fresh(seen.received, file.id)}" data-open-row="${file.id}">${media(file)}<div class="row-main"><span class="row-name" title="${escape(file.name)}">${escape(file.name)}</span><span class="row-meta"><span>${formatSize(file.size)}</span><span class="sep">·</span><span>${escape(t('inbox.from', { name: file.sender }))}</span><span class="sep">·</span><span>${formatTime(file.createdAt)}</span></span></div><div class="row-actions"><button class="icon-button small" data-open="${file.id}" title="${escape(t('action.open'))}" aria-label="${escape(`${t('action.open')} : ${file.name}`)}">${icon('open')}</button><button class="icon-button small" data-reveal="${file.id}" title="${escape(t('action.reveal'))}" aria-label="${escape(t('action.reveal'))}">${icon('folder')}</button></div></div>`;
 }
+function galleryTile(file) {
+  const image = file.path && fileKind(file.name) === 'image' && !/\.(heic|heif)$/i.test(file.name);
+  const art = image ? `<img class="tile-img" loading="lazy" decoding="async" src="${escape(assetUrl(file.path))}" alt="">` : `<span class="tile-art">${kindTile(file.name)}</span>`;
+  return `<button class="tile${fresh(seen.received, file.id)}" data-open-row="${file.id}" ${image ? `data-preview="${file.id}"` : ''} title="${escape(file.name)}">${art}<span class="tile-name">${escape(file.name)}</span><span class="tile-meta">${escape(t('inbox.from', { name: file.sender }))} · ${formatTime(file.createdAt)}</span></button>`;
+}
+function noteTile(note) {
+  return `<button class="tile tile-note${fresh(seen.received, note.id)}" data-note="${note.id}"><span class="tile-art">${icon('text')}<span class="tile-text">${escape(note.text)}</span></span><span class="tile-name">${escape(isLink(note.text) ? t('text.link') : t('text.kind'))}</span><span class="tile-meta">${escape(t('inbox.from', { name: note.sender }))} · ${formatTime(note.createdAt)}</span></button>`;
+}
+function receivedImages() {
+  return state.files.filter(f => f.direction === 'incoming' && f.path && fileKind(f.name) === 'image' && !/\.(heic|heif)$/i.test(f.name));
+}
+function lightbox(id) {
+  const images = receivedImages();
+  const index = images.findIndex(f => f.id === id);
+  if (index < 0) return;
+  const file = images[index];
+  lightboxId = id;
+  const html = `<div class="lightbox-stage"><img src="${escape(assetUrl(file.path))}" alt="${escape(file.name)}"><button class="icon-button bordered lightbox-nav prev" data-lightbox="${escape(images[index - 1]?.id || '')}" ${index === 0 ? 'disabled' : ''} title="${escape(t('action.previous'))}" aria-label="${escape(t('action.previous'))}">${icon('left')}</button><button class="icon-button bordered lightbox-nav next" data-lightbox="${escape(images[index + 1]?.id || '')}" ${index === images.length - 1 ? 'disabled' : ''} title="${escape(t('action.next'))}" aria-label="${escape(t('action.next'))}">${icon('right')}</button></div><div class="lightbox-caption"><span><strong>${index + 1} / ${images.length}</strong> · ${escape(t('inbox.from', { name: file.sender }))} · ${formatSize(file.size)} · ${formatTime(file.createdAt)}</span><span class="row-actions"><button class="button secondary small" data-open="${file.id}">${icon('open')}${escape(t('action.open'))}</button><button class="button secondary small" data-reveal="${file.id}">${icon('folder')}${escape(t('action.reveal'))}</button></span></div>`;
+  if (dialogKind === 'lightbox' && $('#dialog').open) { $('#dialog-title').textContent = file.name; $('#dialog-body').innerHTML = html; }
+  else show('lightbox', file.name, html, { wide: true, className: 'lightbox' });
+}
 function renderInbox() {
-  const received = state.files.filter(f => f.direction === 'incoming').map(f => ({ at: f.createdAt, id: f.id, html: () => receivedRow(f) }))
-    .concat((state.notes || []).filter(n => n.direction === 'incoming').map(n => ({ at: n.createdAt, id: n.id, html: () => noteRow(n) })))
+  const received = state.files.filter(f => f.direction === 'incoming').map(f => ({ at: f.createdAt, id: f.id, html: () => receivedRow(f), tile: () => galleryTile(f) }))
+    .concat((state.notes || []).filter(n => n.direction === 'incoming').map(n => ({ at: n.createdAt, id: n.id, html: () => noteRow(n), tile: () => noteTile(n) })))
     .sort((a, b) => b.at - a.at);
   const incoming = state.transfers.filter(t => t.direction === 'incoming');
   $('#inbox-count').hidden = !received.length;
   $('#inbox-count').textContent = received.length;
-  const key = JSON.stringify([lang, received.map(f => f.id), incoming.map(t => [t.id, t.paused, t.sender])]);
+  const key = JSON.stringify([lang, inboxView, received.map(f => f.id), incoming.map(t => [t.id, t.paused, t.sender])]);
+  $$('[data-view]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.view === inboxView)));
   let html = incoming.map(incomingCard).join('');
   let day = '';
-  for (const item of received) {
-    const label = dayLabel(item.at);
-    if (label !== day) { day = label; html += `<div class="group-label">${escape(label)}</div>`; }
-    html += item.html();
+  if (inboxView === 'grid') {
+    const groups = [];
+    for (const item of received) {
+      const label = dayLabel(item.at);
+      if (label !== day) { day = label; groups.push({ label, tiles: [] }); }
+      groups[groups.length - 1].tiles.push(item.tile());
+    }
+    html += groups.map(g => `<div class="group-label">${escape(g.label)}</div><div class="gallery">${g.tiles.join('')}</div>`).join('');
+  } else {
+    for (const item of received) {
+      const label = dayLabel(item.at);
+      if (label !== day) { day = label; html += `<div class="group-label">${escape(label)}</div>`; }
+      html += item.html();
+    }
   }
   if (!html) html = emptyState('download', t('inbox.empty.title'), t('inbox.empty.text'));
   if (!patch($('#inbox-list'), key, html)) updateProgress(incoming);
+}
+function rateText(transfer) {
+  const rate = transfer.paused ? '' : rateOf(transfer.id, transfer.bytes, transfer.size);
+  return rate ? `<span class="sep">·</span>${escape(rate)}` : '';
 }
 function updateProgress(transfers) {
   for (const transfer of transfers) {
     const percent = percentOf(transfer.bytes, transfer.size);
     $$(`[data-progress="${transfer.id}"] progress`).forEach(p => { p.value = percent; });
+    $$(`[data-rate="${transfer.id}"]`).forEach(el => { el.innerHTML = rateText(transfer); });
     const card = $(`[data-transfer="${transfer.id}"]`);
     if (card) {
       card.querySelector('[data-bytes]').textContent = `${formatSize(transfer.bytes)} / ${formatSize(transfer.size)}`;
@@ -306,7 +344,7 @@ function modesDialog(selected) {
 }
 function settingsDialog(pane) {
   if (pane) settingsPane = pane;
-  const nav = [['appearance', 'palette'], ['files', 'folder'], ['network', 'local'], ['about', 'info']].map(([key, glyph]) => `<button data-pane="${key}" aria-pressed="${settingsPane === key}">${icon(glyph)}${escape(t(`settings.nav.${key}`))}</button>`).join('');
+  const nav = [['appearance', 'palette'], ['files', 'folder'], ['network', 'local'], ['general', 'settings'], ['about', 'info']].map(([key, glyph]) => `<button data-pane="${key}" aria-pressed="${settingsPane === key}">${icon(glyph)}${escape(t(`settings.nav.${key}`))}</button>`).join('');
   show('settings', t('settings.title'), `<div class="settings"><nav class="settings-nav" aria-label="${escape(t('settings.title'))}">${nav}</nav><div id="settings-pane" class="settings-pane">${settingsPaneHtml()}</div></div>`, { wide: true });
 }
 function wallpaperTile(id, thumb, label) {
@@ -335,9 +373,11 @@ function settingsPaneHtml() {
         : `<div class="note">${icon('info')}<span>${escape(t('settings.local_only'))}</span></div>`;
       return `<div class="setting"><h3>${escape(t('settings.network'))}</h3><p>${escape(t('settings.network_text'))}</p>${form}<p class="hint">${icon('info')}<span>${escape(t('settings.port_note', { port: n.port }))}</span></p></div>`;
     }
-    default:
-      return `<div class="about"><img src="icon.svg" alt=""><div><strong>${escape(t('settings.version', { version: state.version }))}</strong><p>${escape(t('settings.about_text'))}</p></div></div>
+    case 'general':
+      return `<div class="setting"><label class="toggle"><input type="checkbox" id="autostart-toggle" ${state.autostart ? 'checked' : ''}><span class="toggle-text"><strong>${escape(t('settings.autostart'))}</strong><span>${escape(t('settings.autostart_text'))}</span></span></label><p class="hint">${icon('info')}<span>${escape(t('settings.open_with'))}</span></p></div>
         <div class="setting"><h3>${escape(t('settings.quit'))}</h3><p>${escape(t('settings.quit_text'))}</p><div><button class="button danger" data-action="quit-confirm">${icon('power')}${escape(t('settings.quit_button'))}</button></div></div>`;
+    default:
+      return `<div class="about"><img src="icon.svg" alt=""><div><strong>${escape(t('settings.version', { version: state.version }))}</strong><p>${escape(t('settings.about_text'))}</p></div></div><p class="hint">${icon('info')}<span>${escape(t('help.shortcuts.text'))}</span></p>`;
   }
 }
 function renderSettingsPane() {
@@ -358,7 +398,7 @@ function noteDialog(id) {
 }
 function helpDialog() {
   const card = (glyph, key) => `<div class="help-card"><h3>${icon(glyph)}${escape(t(`help.${key}.title`))}</h3><p>${escape(t(`help.${key}.text`))}</p></div>`;
-  show('help', t('help.title'), `<div class="help-grid">${card('scan', 'connect')}${card('upload', 'transfer')}${card('internet', 'modes')}${card('alert', 'trouble')}${card('lock', 'privacy')}</div>`, { wide: true });
+  show('help', t('help.title'), `<div class="help-grid">${card('scan', 'connect')}${card('upload', 'transfer')}${card('internet', 'modes')}${card('alert', 'trouble')}${card('lock', 'privacy')}${card('terminal', 'shortcuts')}</div>`, { wide: true });
 }
 async function copyLink() {
   if (!state?.pairUrl) return;
@@ -391,6 +431,9 @@ document.addEventListener('click', async event => {
     if (el.dataset.reveal) { await call('reveal_file', { id: el.dataset.reveal }); return; }
     if (el.dataset.themeChoice) { await setThemeChoice(el.dataset.themeChoice); $$('[data-theme-choice]').forEach(b => b.setAttribute('aria-pressed', String(b.dataset.themeChoice === themeChoice))); return; }
     if (el.dataset.pane) { settingsPane = el.dataset.pane; renderSettingsPane(); return; }
+    if (el.dataset.view) { inboxView = el.dataset.view; try { localStorage.setItem('brise-inbox-view', inboxView); } catch {} renderInbox(); return; }
+    if (el.dataset.preview) { lightbox(el.dataset.preview); return; }
+    if (el.dataset.lightbox !== undefined) { if (el.dataset.lightbox) lightbox(el.dataset.lightbox); return; }
     if (el.dataset.wallpaper) { await call('set_wallpaper', { id: el.dataset.wallpaper }); await refresh(); renderSettingsPane(); return; }
     if (el.dataset.modeCard) { modesDialog(el.dataset.modeCard); return; }
     if (el.id === 'dropzone') { await pickFiles(); return; }
@@ -426,7 +469,7 @@ document.addEventListener('dblclick', event => {
 });
 document.addEventListener('click', event => {
   const row = event.target.closest('[data-note]');
-  if (row && !event.target.closest('button, a')) noteDialog(row.dataset.note);
+  if (row && (row.tagName === 'BUTTON' || !event.target.closest('button, a'))) noteDialog(row.dataset.note);
 });
 document.addEventListener('paste', event => {
   if (event.target.closest('input, textarea') || $('#dialog').open || $('#pair-dialog').open || !state) return;
@@ -447,8 +490,26 @@ document.addEventListener('submit', async event => {
   try { await call('set_address', { address: $('#network-address').value.trim() }); closeDialog(); toast(t('toast.address_updated')); await refresh(); }
   catch (error) { toast(error.message, 'error'); }
 });
-document.addEventListener('change', event => {
+document.addEventListener('change', async event => {
   if (event.target.id === 'network-select') $('#network-address').value = event.target.value;
+  if (event.target.id === 'autostart-toggle') {
+    const box = event.target;
+    try { box.checked = await call('set_autostart_enabled', { enabled: box.checked }); state.autostart = box.checked; }
+    catch (error) { box.checked = !box.checked; toast(error.message, 'error'); }
+  }
+});
+document.addEventListener('keydown', event => {
+  if (!state) return;
+  if (dialogKind === 'lightbox' && $('#dialog').open && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+    const target = $(`.lightbox-nav.${event.key === 'ArrowLeft' ? 'prev' : 'next'}`);
+    if (target && !target.disabled) { event.preventDefault(); lightbox(target.dataset.lightbox); }
+    return;
+  }
+  if (!(event.ctrlKey || event.metaKey) || event.altKey || event.shiftKey) return;
+  const key = event.key.toLowerCase();
+  if (key === 'o') { event.preventDefault(); pickFiles(); }
+  else if (key === 't') { event.preventDefault(); textDialog(); }
+  else if (key === ',') { event.preventDefault(); settingsDialog(); }
 });
 
 document.addEventListener('DOMContentLoaded', async () => {

@@ -10,7 +10,7 @@ use crate::core::{AppError, Brise, Event};
 use crate::i18n::{system_lang, tr, Lang};
 use crate::network::{hostname, interfaces, qr_svg, valid_address, wifi_payload, Network};
 use crate::server::{gateway_factory, serve, Ctx};
-use crate::settings::Store;
+use crate::settings::{autostart_enabled, set_autostart, Store};
 use serde::ser::{Serialize, Serializer};
 use serde_json::{json, Value};
 use std::path::PathBuf;
@@ -167,6 +167,7 @@ impl App {
             "maxFileSize": self.brise.max_file_size,
             "serverError": server_error,
             "wallpaper": self.wallpaper(),
+            "autostart": autostart_enabled(),
         })
     }
 
@@ -283,6 +284,12 @@ async fn pick_wallpaper(handle: AppHandle, app: Shared<'_>) -> Reply<bool> {
 }
 
 #[tauri::command]
+fn set_autostart_enabled(enabled: bool) -> Reply<bool> {
+    set_autostart(enabled)?;
+    Ok(autostart_enabled())
+}
+
+#[tauri::command]
 fn remove_wallpaper(app: Shared<'_>) -> Reply<()> {
     app.settings.remove_custom()?;
     app.brise.notify();
@@ -336,6 +343,40 @@ async fn quit(handle: AppHandle, app: Shared<'_>) -> Reply<()> {
     Ok(())
 }
 
+/// Lit une ligne de commande : `--hidden` et des chemins de fichiers à partager.
+pub fn parse_args<I: IntoIterator<Item = String>>(args: I, cwd: Option<&std::path::Path>) -> (bool, Vec<PathBuf>) {
+    let mut hidden = false;
+    let mut paths = Vec::new();
+    for arg in args {
+        if arg == "--hidden" {
+            hidden = true;
+        } else if arg.starts_with("--") {
+            continue;
+        } else {
+            let path = if let Some(stripped) = arg.strip_prefix("file://") { PathBuf::from(percent_encoding::percent_decode_str(stripped).decode_utf8_lossy().as_ref()) } else { PathBuf::from(&arg) };
+            let path = if path.is_absolute() { path } else { cwd.map(|c| c.join(&path)).unwrap_or(path) };
+            if path.is_file() {
+                paths.push(path);
+            }
+        }
+    }
+    (hidden, paths)
+}
+
+fn share_from_args(handle: &AppHandle, paths: &[PathBuf]) {
+    if paths.is_empty() {
+        return;
+    }
+    if let Some(app) = handle.try_state::<Arc<App>>() {
+        let outcome = match app.share(handle, paths) {
+            Ok(0) => AppError::new(400, "nothing_to_share").body(),
+            Ok(count) => json!({ "count": count }),
+            Err(error) => error.body(),
+        };
+        let _ = handle.emit("brise:shared", outcome);
+    }
+}
+
 fn show_window(handle: &AppHandle) {
     if let Some(window) = handle.get_webview_window("main") {
         let _ = window.show();
@@ -346,6 +387,12 @@ fn show_window(handle: &AppHandle) {
 
 fn notify(handle: &AppHandle, title: &str, body: &str) {
     let _ = handle.notification().builder().title(title).body(body).show();
+}
+
+fn app_hidden_notice(handle: &AppHandle) {
+    if let Some(app) = handle.try_state::<Arc<App>>() {
+        app.hidden_once.store(true, Ordering::Relaxed);
+    }
 }
 
 fn quit_from_tray(handle: &AppHandle) {
@@ -409,16 +456,23 @@ fn bridge(handle: AppHandle, app: Arc<App>) {
 
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_single_instance::init(|handle, _, _| show_window(handle)))
+        .plugin(tauri_plugin_single_instance::init(|handle, argv, cwd| {
+            let (hidden, paths) = parse_args(argv.into_iter().skip(1), Some(std::path::Path::new(&cwd)));
+            share_from_args(handle, &paths);
+            if !hidden || !paths.is_empty() {
+                show_window(handle);
+            }
+        }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_clipboard_manager::init())
-        .invoke_handler(tauri::generate_handler![get_state, qr, wifi_qr, decide, rotate, set_address, select_mode, probe_modes, pick_files, remove_shared, share_text, remove_note, open_folder, reveal_file, open_file, set_wallpaper, pick_wallpaper, remove_wallpaper, quit])
+        .invoke_handler(tauri::generate_handler![get_state, qr, wifi_qr, decide, rotate, set_address, select_mode, probe_modes, pick_files, remove_shared, share_text, remove_note, open_folder, reveal_file, open_file, set_wallpaper, pick_wallpaper, remove_wallpaper, set_autostart_enabled, quit])
         .setup(|tauri_app| {
             let handle = tauri_app.handle().clone();
             let (data_dir, receive_dir) = paths();
             let lang = system_lang();
+            let (hidden, startup_paths) = parse_args(std::env::args().skip(1), std::env::current_dir().ok().as_deref());
             match tauri::async_runtime::block_on(start(data_dir, receive_dir.clone())) {
                 Ok(app) => {
                     let _ = tauri_app.asset_protocol_scope().allow_directory(&receive_dir, true);
@@ -427,6 +481,12 @@ pub fn run() {
                     }
                     tauri_app.manage(app.clone());
                     bridge(handle.clone(), app);
+                    share_from_args(&handle, &startup_paths);
+                    if !hidden || !startup_paths.is_empty() {
+                        show_window(&handle);
+                    } else {
+                        app_hidden_notice(&handle);
+                    }
                 }
                 Err(code) => {
                     let exit = handle.clone();

@@ -40,6 +40,35 @@ body.desktop { overflow: hidden; }
   .inbox .panel-head .button { width: 30px; padding: 0; }
 }
 .panel-body { flex: 1; min-height: 0; overflow: auto; padding: 0 10px 12px; }
+.panel-tools { display: flex; align-items: center; gap: 6px; }
+.segmented.tiny { padding: 2px; gap: 1px; }
+.segmented.tiny button { height: 26px; padding: 0 7px; }
+.gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 10px 8px; padding: 2px 8px 8px; }
+.tile { display: grid; gap: 5px; padding: 0; border: 0; background: none; color: inherit; text-align: left; }
+.tile-img, .tile-art { width: 100%; aspect-ratio: 1; border-radius: var(--r-sm); border: 1px solid var(--line); object-fit: cover; background: var(--panel-2); }
+.tile-art { display: grid; place-items: center; }
+.tile-art .kind-tile { width: 44px; height: 44px; }
+.tile-art .icon { width: 22px; height: 22px; color: var(--tile-text-fg); }
+.tile:hover .tile-img, .tile:hover .tile-art { border-color: var(--line-strong); }
+.tile-name { font-size: 12px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tile-note .tile-art { padding: 10px; align-content: start; justify-items: start; gap: 6px; }
+.tile-note .tile-text { font-size: 11.5px; line-height: 1.35; color: var(--ink-2); display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; overflow: hidden; overflow-wrap: anywhere; }
+.tile-meta { font-size: 11px; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+dialog.lightbox { width: min(1100px, calc(100vw - 32px)); }
+.lightbox-stage { position: relative; display: grid; place-items: center; min-height: 240px; border-radius: var(--r-sm); background: #0b0c0e; overflow: hidden; }
+.lightbox-stage img { max-width: 100%; max-height: 68vh; object-fit: contain; }
+.icon-button.lightbox-nav { position: absolute; top: 50%; transform: translateY(-50%); background: rgba(20, 22, 26, .72); color: #fff; border-color: rgba(255, 255, 255, .18); }
+.icon-button.lightbox-nav:hover:not(:disabled) { background: rgba(20, 22, 26, .92); color: #fff; }
+.icon-button.lightbox-nav:disabled { opacity: .35; }
+.lightbox-nav.prev { left: 10px; }
+.lightbox-nav.next { right: 10px; }
+.lightbox-caption { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-top: 12px; color: var(--ink-2); font-size: 13px; }
+.lightbox-caption strong { color: var(--ink); }
+.toggle { display: flex; align-items: center; gap: 12px; padding: 12px 14px; border-radius: var(--r); border: 1px solid var(--line); cursor: pointer; }
+.toggle input { width: 18px; height: 18px; margin: 0; accent-color: var(--accent); flex-shrink: 0; }
+.toggle .toggle-text { display: grid; gap: 2px; }
+.toggle strong { font-size: 13.5px; font-weight: 650; }
+.toggle span { font-size: 12.5px; color: var(--ink-2); }
 
 .connect-inner { position: relative; flex: 1; min-height: 0; overflow: auto; display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: clamp(24px, 5cqi, 64px); padding: clamp(24px, 5cqi, 56px); }
 .connect-copy { max-width: 520px; }

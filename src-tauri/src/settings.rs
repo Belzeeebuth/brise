@@ -122,6 +122,51 @@ impl Store {
     }
 }
 
+/// Fichier .desktop de démarrage automatique (XDG autostart).
+fn autostart_path() -> Option<PathBuf> {
+    dirs::config_dir().map(|dir| dir.join("autostart").join("brise.desktop"))
+}
+
+pub fn autostart_enabled() -> bool {
+    autostart_path().is_some_and(|path| path.is_file())
+}
+
+/// Commande qui relance Brise tel qu'il est installé : Flatpak, AppImage ou binaire.
+fn launch_command() -> String {
+    if let Ok(id) = std::env::var("FLATPAK_ID") {
+        return format!("flatpak run {id}");
+    }
+    if let Ok(appimage) = std::env::var("APPIMAGE") {
+        return quote(&appimage);
+    }
+    std::env::current_exe().map(|exe| quote(&exe.to_string_lossy())).unwrap_or_else(|_| "brise".into())
+}
+
+fn quote(value: &str) -> String {
+    if value.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+".contains(c)) {
+        value.to_string()
+    } else {
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+}
+
+pub fn set_autostart(enabled: bool) -> Result<(), AppError> {
+    let path = autostart_path().ok_or_else(|| AppError::new(500, "autostart_failed"))?;
+    if !enabled {
+        return match std::fs::remove_file(&path) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(AppError::new(500, "autostart_failed")),
+        };
+    }
+    let entry = format!(
+        "[Desktop Entry]\nType=Application\nName=Brise\nComment=Partage de fichiers avec le téléphone\nExec={} --hidden\nIcon=brise\nTerminal=false\nX-GNOME-Autostart-enabled=true\n",
+        launch_command()
+    );
+    let parent = path.parent().ok_or_else(|| AppError::new(500, "autostart_failed"))?;
+    std::fs::create_dir_all(parent).and_then(|_| std::fs::write(&path, entry)).map_err(|_| AppError::new(500, "autostart_failed"))
+}
+
 fn valid(id: &str) -> bool {
     id == "none" || id == "custom" || WALLPAPERS.contains(&id)
 }

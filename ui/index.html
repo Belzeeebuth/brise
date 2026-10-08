@@ -44,7 +44,10 @@
       <section id="inbox-panel" class="panel card inbox">
         <div class="panel-head">
           <h2><span data-i18n="inbox.title"></span><span id="inbox-count" class="count" hidden></span></h2>
-          <button class="button ghost small" data-action="folder"><span data-icon="folder"></span><span data-i18n="inbox.open_folder"></span></button>
+          <div class="panel-tools">
+            <div class="segmented tiny" role="group"><button data-view="list" data-i18n-title="inbox.view_list" data-i18n-label="inbox.view_list"><span data-icon="list"></span></button><button data-view="grid" data-i18n-title="inbox.view_grid" data-i18n-label="inbox.view_grid"><span data-icon="grid"></span></button></div>
+            <button class="button ghost small" data-action="folder"><span data-icon="folder"></span><span data-i18n="inbox.open_folder"></span></button>
+          </div>
         </div>
         <div id="inbox-list" class="panel-body rows"></div>
       </section>

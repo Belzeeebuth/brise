@@ -17,11 +17,12 @@ Type=Application
 Name=Brise
 GenericName=Partage de fichiers
 Comment=Partagez vos fichiers avec votre téléphone
-Exec=$HOME/.local/bin/brise
+Exec=$HOME/.local/bin/brise %F
 Icon=brise
 Terminal=false
 Categories=Network;FileTransfer;Utility;
-Keywords=partage;fichiers;airdrop;QR;téléphone;
+Keywords=partage;fichiers;airdrop;QR;téléphone;share;files;phone;
+MimeType=$(grep '^MimeType=' "$root/src-tauri/brise.desktop.hbs" | cut -d= -f2-)
 StartupWMClass=brise
 StartupNotify=true
 DESKTOP

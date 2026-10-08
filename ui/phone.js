@@ -89,7 +89,7 @@ function noteRow(note) {
   const isNew = !firstFiles && !seenFiles.has(note.id);
   seenFiles.add(note.id);
   const link = isLink(note.text);
-  return `<div class="row note${isNew ? ' fresh' : ''}"><span class="kind-tile kind-text">${icon('text')}</span><div class="row-main"><span class="row-name note-text">${escape(note.text)}</span><span class="row-meta">${escape(link ? t('text.link') : t('text.kind'))}</span></div><div class="row-actions">${link ? `<a class="button secondary small" href="${escape(note.text)}" target="_blank" rel="noreferrer">${icon('open')}${escape(t('action.open'))}</a>` : ''}<button class="button secondary small" data-copy="${note.id}">${icon('copy')}${escape(t('text.copy'))}</button></div></div>`;
+  return `<div class="row text-row${isNew ? ' fresh' : ''}"><span class="kind-tile kind-text">${icon('text')}</span><div class="row-main"><span class="row-name note-text">${escape(note.text)}</span><span class="row-meta">${escape(link ? t('text.link') : t('text.kind'))}</span></div><div class="row-actions">${link ? `<a class="button secondary small" href="${escape(note.text)}" target="_blank" rel="noreferrer">${icon('open')}${escape(t('action.open'))}</a>` : ''}<button class="button secondary small" data-copy="${note.id}">${icon('copy')}${escape(t('text.copy'))}</button></div></div>`;
 }
 function updateState(next) {
   state = next; hadSession = true; errorCount = 0;
@@ -136,7 +136,9 @@ function uploadCaption(item) {
   if (item.status === 'done') return t('upload.done');
   if (item.status === 'cancelled') return t('upload.cancelled');
   if (item.status === 'error') return item.error;
-  return percentOf(item.bytes, item.size) >= 100 ? t('upload.finishing') : `${t('upload.sending')} ${formatSize(item.bytes)} / ${formatSize(item.size)}`;
+  if (percentOf(item.bytes, item.size) >= 100) return t('upload.finishing');
+  const rate = rateOf(item.id, item.bytes, item.size);
+  return `${t('upload.sending')} ${formatSize(item.bytes)} / ${formatSize(item.size)}${rate ? ` · ${rate}` : ''}`;
 }
 function uploadRow(item) {
   const active = ['queued', 'uploading'].includes(item.status);

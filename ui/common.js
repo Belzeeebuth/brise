@@ -41,6 +41,10 @@ const ICONS = {
   info: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM12 16v-4M12 8h.01',
   text: 'M4 6h16M4 12h16M4 18h10',
   copy: 'M20 9h-9a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h9a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
+  list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
+  grid: 'M3 3h7v7H3zM14 3h7v7h-7zM14 14h7v7h-7zM3 14h7v7H3z',
+  left: 'm15 18-6-6 6-6',
+  right: 'm9 18 6-6-6-6',
 };
 const icon = (name, extra = '') => `<svg class="icon ${extra}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="${ICONS[name] || ICONS.file}"/></svg>`;
 const $ = selector => document.querySelector(selector);
@@ -76,6 +80,24 @@ function progressBar(value, label) {
   return `<progress class="progress" max="100" value="${Math.max(0, Math.min(100, Math.floor(value)))}" aria-label="${escape(label)}"></progress>`;
 }
 function percentOf(bytes, size) { return size ? Math.min(100, Math.floor(bytes / size * 100)) : 0; }
+function formatDuration(seconds) {
+  seconds = Math.max(0, Math.round(seconds));
+  if (seconds < 60) return t('time.seconds', { n: seconds });
+  if (seconds < 3600) return t('time.minutes', { n: Math.round(seconds / 60) });
+  return t('time.hours', { h: Math.floor(seconds / 3600), m: String(Math.round((seconds % 3600) / 60)).padStart(2, '0') });
+}
+const rates = new Map();
+function rateOf(id, bytes, size) {
+  const now = Date.now(), prev = rates.get(id);
+  let rate = prev?.rate || 0;
+  if (prev && now - prev.time >= 300) {
+    const instant = (bytes - prev.bytes) / ((now - prev.time) / 1000);
+    if (instant >= 0) rate = prev.rate ? prev.rate * 0.6 + instant * 0.4 : instant;
+    rates.set(id, { bytes, time: now, rate });
+  } else if (!prev) rates.set(id, { bytes, time: now, rate: 0 });
+  if (rate < 2048 || bytes >= size) return '';
+  return `${formatSize(Math.round(rate))}/s · ${t('transfer.left', { time: formatDuration((size - bytes) / rate) })}`;
+}
 function toast(message, kind = 'info') {
   const el = document.createElement('div');
   el.className = `toast toast-${kind}`;
