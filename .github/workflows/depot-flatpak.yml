@@ -1,0 +1,81 @@
+name: Dépôt Flatpak
+
+# Construit le Flatpak signé d’une version publiée, le joint à sa release et
+# publie le dépôt Flatpak sur GitHub Pages (https://belzeeebuth.github.io/brise/).
+on:
+  workflow_run:
+    workflows: [Release]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag à publier (par exemple v0.5.1)
+        required: true
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: depot-flatpak
+  cancel-in-progress: false
+
+env:
+  TAG: ${{ inputs.tag || github.event.workflow_run.head_branch }}
+  KEY_ID: 9901F9200D0F7813A9552C36461E1ADF26B8993B
+
+jobs:
+  build:
+    name: Construire et signer le Flatpak
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    container:
+      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
+      options: --privileged
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+          fetch-depth: 0
+      - name: Reprendre l’empaquetage Flatpak du tag
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git checkout "$TAG" -- flatpak/io.github.belzeeebuth.brise.yml flatpak/cargo-sources.json flatpak/cloudflared
+          grep -n "tag: $TAG" flatpak/io.github.belzeeebuth.brise.yml
+      - name: Importer la clé de signature
+        env:
+          FLATPAK_GPG_KEY: ${{ secrets.FLATPAK_GPG_KEY }}
+        run: |
+          test -n "$FLATPAK_GPG_KEY" || { echo "Le secret FLATPAK_GPG_KEY manque." >&2; exit 1; }
+          printf '%s\n' "$FLATPAK_GPG_KEY" | gpg --batch --import
+          gpg --list-secret-keys "$KEY_ID"
+      - uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
+        with:
+          bundle: Brise.flatpak
+          manifest-path: flatpak/io.github.belzeeebuth.brise.yml
+          branch: stable
+          gpg-sign: ${{ env.KEY_ID }}
+          cache-key: flatpak-depot-${{ env.TAG }}
+          upload-artifact: false
+      - name: Préparer le dépôt et la page
+        run: scripts/flatpak-site.sh repo site "$KEY_ID"
+      - name: Joindre le Flatpak à la release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          files: Brise.flatpak
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+  deploy:
+    name: Publier sur GitHub Pages
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

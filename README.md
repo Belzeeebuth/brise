@@ -43,8 +43,15 @@ Les paquets de chaque version sont dans les
 [releases GitHub](https://github.com/Belzeeebuth/brise/releases) ; `npm run
 build` les produit dans `src-tauri/target/release/bundle/`.
 
-Un paquet Flatpak (`io.github.belzeeebuth.brise`) se construit depuis le dossier
-`flatpak/` :
+Le plus simple est le dépôt Flatpak de Brise, avec mises à jour automatiques
+(page d’installation : https://belzeeebuth.github.io/brise/) :
+
+```bash
+flatpak install --user https://belzeeebuth.github.io/brise/io.github.belzeeebuth.brise.flatpakref
+```
+
+Le paquet Flatpak (`io.github.belzeeebuth.brise`) se construit aussi depuis le
+dossier `flatpak/` :
 
 ```bash
 git submodule update --init

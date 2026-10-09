@@ -48,25 +48,3 @@ jobs:
             src-tauri/target/release/bundle/rpm/*.rpm
             src-tauri/target/release/bundle/appimage/*.AppImage
 
-  flatpak:
-    name: Paquet Flatpak
-    needs: packages
-    runs-on: ubuntu-24.04
-    container:
-      image: ghcr.io/flathub-infra/flatpak-github-actions:gnome-51
-      options: --privileged
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-      - name: Construire le Flatpak depuis le tag publié
-        uses: flathub-infra/flatpak-github-actions/flatpak-builder@master
-        with:
-          bundle: Brise.flatpak
-          manifest-path: flatpak/io.github.belzeeebuth.brise.yml
-          cache-key: flatpak-builder-${{ github.sha }}
-          mirror-screenshots-url: https://dl.flathub.org/media
-      - name: Ajouter le Flatpak à la release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: Brise.flatpak

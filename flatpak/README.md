@@ -17,8 +17,19 @@ flatpak-builder --user --install --force-clean build-flatpak flatpak/io.github.b
 ```
 
 Sur GitHub, le workflow « Flatpak » construit le paquet depuis le commit courant
-et passe le linter de Flathub ; le workflow « Release » le construit depuis le
-tag et l’ajoute aux paquets de la release.
+et passe le linter de Flathub. Après chaque release, le workflow « Dépôt Flatpak »
+construit le paquet signé depuis le tag, l’ajoute à la release et publie le dépôt
+sur GitHub Pages (`site/` : page `index.html`, `brise.flatpakrepo`,
+`io.github.belzeeebuth.brise.flatpakref`, clé publique `brise.gpg.asc`). Il se
+relance à la main pour un tag existant :
+
+```bash
+gh workflow run depot-flatpak.yml -f tag=v0.5.1
+```
+
+Le dépôt est signé par la clé `9901F9200D0F7813A9552C36461E1ADF26B8993B`, dont la
+partie privée est le secret GitHub `FLATPAK_GPG_KEY`. Une nouvelle clé obligerait
+chaque utilisateur à réinstaller le dépôt : gardez-en une sauvegarde.
 
 ## Mettre à jour les sources générées
 

@@ -1,0 +1,8 @@
+[Flatpak Repo]
+Title=Brise
+Url=https://belzeeebuth.github.io/brise/repo/
+Homepage=https://belzeeebuth.github.io/brise/
+Comment=Dépôt Flatpak de Brise
+Description=Partage de fichiers, de photos et de textes entre un PC Linux et n’importe quel téléphone.
+Icon=https://belzeeebuth.github.io/brise/brise-128.png
+GPGKey=mDMEasiZUxYJKwYBBAHaRw8BAQdAgc8lCvElJ1Clo+zgS8T2qC4KH1OCokjzS8882jpcN4+0R0JyaXNlIChkw6lww7R0IEZsYXRwYWspIDw3NjU4NTg4OCtCZWx6ZWVlYnV0aEB1c2Vycy5ub3JlcGx5LmdpdGh1Yi5jb20+iJAEExYKADgWIQSZAfkgDQ94E6lVLDZGHhrfJriZOwUCasiZUwIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAKCRBGHhrfJriZOzD3AQD8P5qFSVLBSd7GtQ8n9upfsKeBJwmkNspDnYCoa99CkwEAhuXbkirLZm+m7jC6TLW7DNm04fTYBaSl+5I5juDc8AE=
